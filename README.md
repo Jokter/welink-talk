@@ -1,6 +1,6 @@
 # WeLink Pi Bridge
 
-将 WeLink 账号 `p_xiaoluban` 作为 Pi coding agent 的聊天入口。指定用户通过私聊 `p_xiaoluban`，即可在手机上调用电脑中的 Pi。所有有效消息必须以 `/` 开头，其他消息会被忽略。
+将 WeLink 账号 `p_xiaoluban` 作为 Pi coding agent 的聊天入口。指定用户通过私聊 `p_xiaoluban`，即可像普通聊天一样调用电脑中的 Pi。
 
 账号关系：
 
@@ -79,33 +79,15 @@ pi --model {model} --no-session --no-approve -p
 - `--no-approve`：不加载未经信任的项目本地扩展和配置。
 - `-p`：输出最终回复后退出。
 
-## 手机命令
+## 使用方式
 
 ```text
-/帮我分析当前项目的目录结构
-/help
-/help model
-/help dir
-/model list
-/model current
-/model switch 2
-/model switch openai/gpt-5
-/model help
-/dir help
-/dir current
-/dir roots
-/dir list
-/dir cd 2
-/dir back
-/dir cd D:\workspaces\project-a
-/dir root
-/new
-/new help
+帮我分析当前项目的目录结构
+刚才提到的第二个问题怎么修改
+直接修改并给我最终结果
 ```
 
-每个 WeLink 私聊分别保存模型和最近六轮上下文。切换模型时自动清除旧上下文。
-
-每个会话也会独立保存 Pi 当前目录。目录只能在 `allowed_working_roots` 配置的工作区内切换；切换目录时会自动开启新对话，避免把上一个项目的上下文带入新项目。
+不需要 `/` 前缀，也不提供 `/help`、`/model`、`/dir`、`/new` 等聊天命令。模型和工作目录在电脑端通过安装向导配置。桥接程序保存最近10轮上下文，因此可以连续追问；程序重启后历史仍保存在 `state.json` 中。
 
 ## 启动与停止
 
@@ -115,7 +97,7 @@ pi --model {model} --no-session --no-approve -p
 .\start.ps1
 ```
 
-首次启动会处理最近1条尚未去重的有效指令。之后通过消息 ID 去重，不会重复执行同一条消息。
+首次启动会处理最近1条尚未去重的消息。之后通过消息 ID 去重，不会重复执行同一条消息。
 
 程序以 `w00789509` 的登录身份，每5秒只查询它与 `p_xiaoluban` 会话中的最新1条消息，并同时校验 `sender=w00789509` 和 `receiver=p_xiaoluban`。Pi 只生成最终答案；回复不经过 Pi 决策或 `welink-cli`，而由桥接程序直接调用 MCP，以 `p_xiaoluban` 身份发送。
 
