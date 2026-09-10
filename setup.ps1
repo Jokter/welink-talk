@@ -54,7 +54,7 @@ $ConfigSource = if (Test-Path $ConfigPath) { $ConfigPath } else { $ExampleConfig
 $Config = Get-Content $ConfigSource -Raw | ConvertFrom-Json
 
 Write-Host ""
-Write-Host "=== WeLink ZCode Bridge Setup ==="
+Write-Host "=== WeLink Pi Bridge Setup ==="
 Write-Host ""
 Write-Host "[1/5] Refreshing the WeLink token..."
 & welink-cli auth login --env pro
@@ -137,108 +137,98 @@ $Config.group_chats = @(
 )
 
 Write-Host ""
-Write-Host "[3/5] Discover ZCode."
-$ZCodeRoot = Join-Path $env:USERPROFILE ".zcode"
-$DiscoveryScript = Join-Path $ProjectDir "discover_zcode.py"
-$Discovery = $null
-try {
-    $DiscoveryText = (& python $DiscoveryScript --root $ZCodeRoot 2>&1 | Out-String)
-    if ($LASTEXITCODE -eq 0) {
-        $Discovery = $DiscoveryText | ConvertFrom-Json
+Write-Host "[3/5] Discover Pi."
+$DiscoveryScript = Join-Path $ProjectDir "discover_pi.py"
+
+function Get-PiDiscovery {
+    $Text = (& python $DiscoveryScript 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+    try {
+        return $Text | ConvertFrom-Json
+    }
+    catch {
+        return $null
     }
 }
-catch {
-    $Discovery = $null
-}
 
-if ($Discovery) {
-    @($Discovery.warnings) | ForEach-Object { Write-Warning $_ }
-}
-
-$CommandPrefix = @()
-if ($Discovery -and @($Discovery.command).Count -gt 0) {
-    $CommandPrefix = @($Discovery.command)
-    Write-Host ("Detected command: {0}" -f ($CommandPrefix -join " "))
-}
-else {
-    $ExistingExecutable = [string]$Config.zcode.command[0]
-    if (-not $ExistingExecutable -or $ExistingExecutable -match "Path.To.zcode") {
-        $ExistingExecutable = "zcode"
+$Discovery = Get-PiDiscovery
+if (-not $Discovery -or @($Discovery.command).Count -eq 0) {
+    Write-Host "Pi is not installed or is not available on PATH."
+    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+        throw "npm was not found. Install Node.js, then run setup again."
     }
-    $CommandPrefix = @(Read-WithDefault "ZCode executable name or full path" $ExistingExecutable)
-}
-
-$DetectedArguments = if ($Discovery) { @($Discovery.arguments) } else { @() }
-$HasModelArgument = (($DetectedArguments -join " ") -match "\{model\}")
-if ($DetectedArguments.Count -gt 0 -and $HasModelArgument) {
-    $CommandArguments = $DetectedArguments
-    Write-Host ("Detected arguments: {0}" -f ($CommandArguments -join " "))
-}
-else {
-    $ExistingArguments = @($Config.zcode.command | Select-Object -Skip 1) -join " "
-    if (-not $ExistingArguments) {
-        $ExistingArguments = "--model {model} --output-format json"
-    }
-    $ArgumentTemplate = Read-WithDefault "ZCode argument template" $ExistingArguments
-    $CommandArguments = @($ArgumentTemplate -split "\s+" | Where-Object { $_ })
-}
-
-$PromptModeUncertain = $Discovery -and (@($Discovery.warnings) -match "Prompt input mode")
-if ($Discovery -and -not $PromptModeUncertain) {
-    $PromptViaStdin = [bool]$Discovery.prompt_via_stdin
-    $InputMode = if ($PromptViaStdin) { "stdin" } else { "argument" }
-    Write-Host "Detected prompt input mode: $InputMode"
-}
-else {
-    $InputModeDefault = if ($Config.zcode.prompt_via_stdin) { "stdin" } else { "argument" }
-    while ($true) {
-        $InputMode = (Read-WithDefault "Prompt input mode: stdin or argument" $InputModeDefault).ToLowerInvariant()
-        if ($InputMode -in @("stdin", "argument")) {
-            break
+    if (Read-YesNo "Install Pi now?" $true) {
+        & npm install -g --ignore-scripts '@earendil-works/pi-coding-agent'
+        if ($LASTEXITCODE -ne 0) {
+            throw "Pi installation failed."
         }
-        Write-Host "Please enter stdin or argument."
+        $Discovery = Get-PiDiscovery
     }
-    $PromptViaStdin = ($InputMode -eq "stdin")
 }
-if (-not $PromptViaStdin -and (($CommandArguments -join " ") -notmatch "\{prompt\}")) {
-    $ArgumentTemplate = Read-WithDefault "Arguments including {prompt}" (($CommandArguments -join " ") + " --prompt {prompt}")
-    $CommandArguments = @($ArgumentTemplate -split "\s+" | Where-Object { $_ })
+if (-not $Discovery -or @($Discovery.command).Count -eq 0) {
+    throw "The pi command was not found. Restart PowerShell after installing Pi, then run setup again."
 }
 
-$Config.zcode.command = @($CommandPrefix) + @($CommandArguments)
-$Config.zcode.prompt_via_stdin = $PromptViaStdin
-
-$DiscoveredModels = if ($Discovery) { @($Discovery.models) } else { @() }
-if ($DiscoveredModels.Count -gt 0) {
-    $Models = $DiscoveredModels
-    Write-Host ("Detected models: {0}" -f ($Models -join ", "))
+if ($Discovery.error) {
+    Write-Warning $Discovery.error
 }
-else {
-    $ExistingModels = @($Config.zcode.models) -join ","
-    $ModelsText = Read-WithDefault "Available model names, comma-separated" $ExistingModels
-    $Models = @($ModelsText -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-}
+$Models = @($Discovery.models)
 if ($Models.Count -eq 0) {
-    throw "At least one model is required."
+    Write-Host "Start Pi in another terminal, complete /login, then run this setup again."
+    throw "No authenticated Pi models were found."
 }
-$Config.zcode.models = $Models
 
-$DetectedDefaultModel = if ($Discovery) { [string]$Discovery.default_model } else { "" }
-if ($DetectedDefaultModel -and $DetectedDefaultModel -in $Models) {
-    $DefaultModel = $DetectedDefaultModel
-    Write-Host "Detected default model: $DefaultModel"
-}
-elseif ([string]$Config.zcode.default_model -in $Models) {
-    $DefaultModel = [string]$Config.zcode.default_model
-}
-else {
+$DefaultModel = [string]$Discovery.default_model
+if (-not $DefaultModel -or $DefaultModel -notin $Models) {
     $DefaultModel = [string]$Models[0]
 }
-$Config.zcode.default_model = $DefaultModel
+$PiCommand = @($Discovery.command) + @(
+    "--model",
+    "{model}",
+    "--no-session",
+    "--no-approve",
+    "-p"
+)
+
+$PreviousWorkingDirectory = ""
+if ($Config.PSObject.Properties.Name -contains "pi") {
+    $PreviousWorkingDirectory = [string]$Config.pi.working_directory
+}
+elseif ($Config.PSObject.Properties.Name -contains "zcode") {
+    $PreviousWorkingDirectory = [string]$Config.zcode.working_directory
+}
+
+$PiConfig = [pscustomobject]@{
+    command = $PiCommand
+    prompt_via_stdin = $true
+    working_directory = $PreviousWorkingDirectory
+    timeout_seconds = 900
+    history_turns = 6
+    default_model = $DefaultModel
+    models = $Models
+}
+if ($Config.PSObject.Properties.Name -contains "pi") {
+    $Config.pi = $PiConfig
+}
+else {
+    $Config | Add-Member -NotePropertyName "pi" -NotePropertyValue $PiConfig
+}
+if ($Config.PSObject.Properties.Name -contains "zcode") {
+    $Config.PSObject.Properties.Remove("zcode")
+}
+
+Write-Host ("Detected Pi: {0}" -f (@($Discovery.command) -join " "))
+if ($Discovery.version) {
+    Write-Host "Detected version: $($Discovery.version)"
+}
+Write-Host "Detected $($Models.Count) available models."
+Write-Host "Default model: $DefaultModel"
 
 Write-Host ""
-Write-Host "[4/5] Configure the ZCode working directory."
-$ExistingWorkingDirectory = [string]$Config.zcode.working_directory
+Write-Host "[4/5] Configure the Pi working directory."
+$ExistingWorkingDirectory = [string]$Config.pi.working_directory
 if (-not $ExistingWorkingDirectory -or $ExistingWorkingDirectory -eq "C:\work") {
     $ExistingWorkingDirectory = (Get-Location).Path
 }
@@ -246,7 +236,7 @@ $WorkingDirectory = Read-WithDefault "Working directory" $ExistingWorkingDirecto
 if (-not (Test-Path $WorkingDirectory -PathType Container)) {
     throw "Working directory does not exist: $WorkingDirectory"
 }
-$Config.zcode.working_directory = $WorkingDirectory
+$Config.pi.working_directory = $WorkingDirectory
 
 $ConfigJson = $Config | ConvertTo-Json -Depth 20
 $Utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
@@ -256,7 +246,7 @@ Write-Host ""
 Write-Host "[5/5] Setup completed."
 Write-Host "  WeLink UID:      $UserAccount"
 Write-Host "  Control group:   $GroupId"
-Write-Host ("  ZCode command:    {0}" -f (@($Config.zcode.command) -join " "))
+Write-Host ("  Pi command:       {0}" -f (@($Config.pi.command) -join " "))
 Write-Host "  Default model:   $DefaultModel"
 Write-Host "  Working directory: $WorkingDirectory"
 Write-Host "  Config file:     $ConfigPath"
