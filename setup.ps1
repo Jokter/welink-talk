@@ -137,56 +137,102 @@ $Config.group_chats = @(
 )
 
 Write-Host ""
-Write-Host "[3/5] Configure ZCode."
-$ExistingExecutable = [string]$Config.zcode.command[0]
-if (-not $ExistingExecutable -or $ExistingExecutable -match "Path.To.zcode") {
-    $ExistingExecutable = "zcode"
-}
-$ZCodeExecutable = Read-WithDefault "ZCode executable name or full path" $ExistingExecutable
-$ZCodeCommand = Get-Command $ZCodeExecutable -ErrorAction SilentlyContinue
-if (-not $ZCodeCommand -and -not (Test-Path $ZCodeExecutable -PathType Leaf)) {
-    Write-Warning "ZCode executable was not found. You can finish setup, but requests will fail until this value is corrected."
-}
-
-$ExistingArguments = @($Config.zcode.command | Select-Object -Skip 1) -join " "
-if (-not $ExistingArguments) {
-    $ExistingArguments = "--model {model} --output-format json"
-}
-$ArgumentTemplate = Read-WithDefault "ZCode argument template" $ExistingArguments
-
-$InputModeDefault = if ($Config.zcode.prompt_via_stdin) { "stdin" } else { "argument" }
-while ($true) {
-    $InputMode = (Read-WithDefault "Prompt input mode: stdin or argument" $InputModeDefault).ToLowerInvariant()
-    if ($InputMode -in @("stdin", "argument")) {
-        break
+Write-Host "[3/5] Discover ZCode."
+$ZCodeRoot = Join-Path $env:USERPROFILE ".zcode"
+$DiscoveryScript = Join-Path $ProjectDir "discover_zcode.py"
+$Discovery = $null
+try {
+    $DiscoveryText = (& python $DiscoveryScript --root $ZCodeRoot 2>&1 | Out-String)
+    if ($LASTEXITCODE -eq 0) {
+        $Discovery = $DiscoveryText | ConvertFrom-Json
     }
-    Write-Host "Please enter stdin or argument."
 }
-if ($InputMode -eq "argument" -and $ArgumentTemplate -notmatch "\{prompt\}") {
-    Write-Host "Argument mode requires the {prompt} placeholder."
-    $ArgumentTemplate = Read-WithDefault "ZCode argument template including {prompt}" "$ArgumentTemplate --prompt {prompt}"
+catch {
+    $Discovery = $null
 }
 
-$Command = @($ZCodeExecutable)
-if ($ArgumentTemplate) {
-    $Command += @($ArgumentTemplate -split "\s+" | Where-Object { $_ })
+if ($Discovery) {
+    @($Discovery.warnings) | ForEach-Object { Write-Warning $_ }
 }
-$Config.zcode.command = $Command
-$Config.zcode.prompt_via_stdin = ($InputMode -eq "stdin")
 
-$ExistingModels = @($Config.zcode.models) -join ","
-$ModelsText = Read-WithDefault "Available model names, comma-separated" $ExistingModels
-$Models = @($ModelsText -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$CommandPrefix = @()
+if ($Discovery -and @($Discovery.command).Count -gt 0) {
+    $CommandPrefix = @($Discovery.command)
+    Write-Host ("Detected command: {0}" -f ($CommandPrefix -join " "))
+}
+else {
+    $ExistingExecutable = [string]$Config.zcode.command[0]
+    if (-not $ExistingExecutable -or $ExistingExecutable -match "Path.To.zcode") {
+        $ExistingExecutable = "zcode"
+    }
+    $CommandPrefix = @(Read-WithDefault "ZCode executable name or full path" $ExistingExecutable)
+}
+
+$DetectedArguments = if ($Discovery) { @($Discovery.arguments) } else { @() }
+$HasModelArgument = (($DetectedArguments -join " ") -match "\{model\}")
+if ($DetectedArguments.Count -gt 0 -and $HasModelArgument) {
+    $CommandArguments = $DetectedArguments
+    Write-Host ("Detected arguments: {0}" -f ($CommandArguments -join " "))
+}
+else {
+    $ExistingArguments = @($Config.zcode.command | Select-Object -Skip 1) -join " "
+    if (-not $ExistingArguments) {
+        $ExistingArguments = "--model {model} --output-format json"
+    }
+    $ArgumentTemplate = Read-WithDefault "ZCode argument template" $ExistingArguments
+    $CommandArguments = @($ArgumentTemplate -split "\s+" | Where-Object { $_ })
+}
+
+$PromptModeUncertain = $Discovery -and (@($Discovery.warnings) -match "Prompt input mode")
+if ($Discovery -and -not $PromptModeUncertain) {
+    $PromptViaStdin = [bool]$Discovery.prompt_via_stdin
+    $InputMode = if ($PromptViaStdin) { "stdin" } else { "argument" }
+    Write-Host "Detected prompt input mode: $InputMode"
+}
+else {
+    $InputModeDefault = if ($Config.zcode.prompt_via_stdin) { "stdin" } else { "argument" }
+    while ($true) {
+        $InputMode = (Read-WithDefault "Prompt input mode: stdin or argument" $InputModeDefault).ToLowerInvariant()
+        if ($InputMode -in @("stdin", "argument")) {
+            break
+        }
+        Write-Host "Please enter stdin or argument."
+    }
+    $PromptViaStdin = ($InputMode -eq "stdin")
+}
+if (-not $PromptViaStdin -and (($CommandArguments -join " ") -notmatch "\{prompt\}")) {
+    $ArgumentTemplate = Read-WithDefault "Arguments including {prompt}" (($CommandArguments -join " ") + " --prompt {prompt}")
+    $CommandArguments = @($ArgumentTemplate -split "\s+" | Where-Object { $_ })
+}
+
+$Config.zcode.command = @($CommandPrefix) + @($CommandArguments)
+$Config.zcode.prompt_via_stdin = $PromptViaStdin
+
+$DiscoveredModels = if ($Discovery) { @($Discovery.models) } else { @() }
+if ($DiscoveredModels.Count -gt 0) {
+    $Models = $DiscoveredModels
+    Write-Host ("Detected models: {0}" -f ($Models -join ", "))
+}
+else {
+    $ExistingModels = @($Config.zcode.models) -join ","
+    $ModelsText = Read-WithDefault "Available model names, comma-separated" $ExistingModels
+    $Models = @($ModelsText -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
 if ($Models.Count -eq 0) {
     throw "At least one model is required."
 }
 $Config.zcode.models = $Models
 
-$DefaultModel = Read-WithDefault "Default model" ([string]$Config.zcode.default_model)
-if ($DefaultModel -notin $Models) {
-    Write-Host "The default model was added to the model list."
-    $Models = @($DefaultModel) + @($Models)
-    $Config.zcode.models = $Models
+$DetectedDefaultModel = if ($Discovery) { [string]$Discovery.default_model } else { "" }
+if ($DetectedDefaultModel -and $DetectedDefaultModel -in $Models) {
+    $DefaultModel = $DetectedDefaultModel
+    Write-Host "Detected default model: $DefaultModel"
+}
+elseif ([string]$Config.zcode.default_model -in $Models) {
+    $DefaultModel = [string]$Config.zcode.default_model
+}
+else {
+    $DefaultModel = [string]$Models[0]
 }
 $Config.zcode.default_model = $DefaultModel
 
@@ -210,7 +256,7 @@ Write-Host ""
 Write-Host "[5/5] Setup completed."
 Write-Host "  WeLink UID:      $UserAccount"
 Write-Host "  Control group:   $GroupId"
-Write-Host "  ZCode executable: $ZCodeExecutable"
+Write-Host ("  ZCode command:    {0}" -f (@($Config.zcode.command) -join " "))
 Write-Host "  Default model:   $DefaultModel"
 Write-Host "  Working directory: $WorkingDirectory"
 Write-Host "  Config file:     $ConfigPath"
