@@ -1,5 +1,7 @@
 param(
-    [string]$ControlUserAccount = ""
+    [string]$BotAccount = "p_xiaoluban",
+    [Alias("ControlUserAccount")]
+    [string]$AllowedUserAccount = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -68,29 +70,42 @@ if ($StatusText -match "UID:\s*([^\s]+)") {
 if ($LoggedInUserAccount) {
     Write-Host "Signed-in WeLink UID: $LoggedInUserAccount"
 }
+if ($BotAccount -and $LoggedInUserAccount -and $LoggedInUserAccount -ne $BotAccount) {
+    Write-Warning "The WeLink PC account is '$LoggedInUserAccount', but the Pi bot account should be '$BotAccount'."
+    if (-not (Read-YesNo "Continue with the current WeLink account anyway?" $false)) {
+        throw "Sign in to WeLink PC as '$BotAccount', then run setup.ps1 again."
+    }
+}
+
+if ($Config.PSObject.Properties.Name -contains "bot_account") {
+    $Config.bot_account = $BotAccount
+}
+else {
+    $Config | Add-Member -NotePropertyName "bot_account" -NotePropertyValue $BotAccount
+}
 
 Write-Host ""
 Write-Host "[2/5] Configure the private control user."
 $ExistingControlUser = ""
 if (@($Config.private_chats).Count -gt 0) {
     $CandidateAccount = [string]$Config.private_chats[0].account
-    if ($CandidateAccount -and $CandidateAccount -ne "a0012345") {
+    if ($CandidateAccount -and $CandidateAccount -notin @("a0012345", $BotAccount)) {
         $ExistingControlUser = $CandidateAccount
     }
 }
-if (-not $ControlUserAccount) {
-    $DefaultControlUser = if ($ExistingControlUser) { $ExistingControlUser } else { "p_xiaoluban" }
-    $ControlUserAccount = Read-WithDefault "WeLink account allowed to control Pi" $DefaultControlUser
+if (-not $AllowedUserAccount) {
+    $DefaultControlUser = if ($ExistingControlUser) { $ExistingControlUser } else { "w00789509" }
+    $AllowedUserAccount = Read-WithDefault "WeLink user allowed to chat with the Pi bot" $DefaultControlUser
 }
-if (-not $ControlUserAccount) {
+if (-not $AllowedUserAccount) {
     throw "A private control user is required."
 }
-Write-Host "Using private control user: $ControlUserAccount"
+Write-Host "Using allowed private user: $AllowedUserAccount"
 
 $Config.private_chats = @(
     [pscustomobject]@{
-        account = $ControlUserAccount
-        allowed_senders = @($ControlUserAccount)
+        account = $AllowedUserAccount
+        allowed_senders = @($AllowedUserAccount)
         trigger_prefix = "/"
     }
 )
@@ -237,9 +252,10 @@ $Utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
 Write-Host ""
 Write-Host "[5/5] Setup completed."
 if ($LoggedInUserAccount) {
-    Write-Host "  Signed-in UID:     $LoggedInUserAccount"
+    Write-Host "  Signed-in bot UID: $LoggedInUserAccount"
 }
-Write-Host "  Control user:      $ControlUserAccount"
+Write-Host "  Pi bot account:    $BotAccount"
+Write-Host "  Allowed user:      $AllowedUserAccount"
 Write-Host ("  Pi command:       {0}" -f (@($Config.pi.command) -join " "))
 Write-Host "  Default model:   $DefaultModel"
 Write-Host "  Working directory: $WorkingDirectory"
