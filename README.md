@@ -72,13 +72,13 @@ pi --model {model} --no-session --no-approve -p
 /模型 当前
 /模型 切换 2
 /模型 切换 openai/gpt-5
-/项目 当前
-/项目 工作区
-/项目 列表
-/项目 进入 2
-/项目 返回
-/项目 切换 D:\workspaces\project-a
-/项目 默认
+/dir
+/dir roots
+/dir list
+/dir cd 2
+/dir back
+/dir cd D:\workspaces\project-a
+/dir root
 /新对话
 /帮助
 ```
