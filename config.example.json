@@ -1,0 +1,40 @@
+{
+  "welink_cli": "welink-cli",
+  "poll_interval_seconds": 5,
+  "query_count": 20,
+  "reply_max_chars": 3500,
+  "ignore_existing_on_first_start": true,
+  "state_file": "state.json",
+  "private_chats": [
+    {
+      "account": "a0012345",
+      "allowed_senders": ["a0012345"],
+      "trigger_prefix": "/"
+    }
+  ],
+  "group_chats": [
+    {
+      "group_id": "1234567891011",
+      "allowed_senders": ["a0012345"],
+      "trigger_prefix": "/"
+    }
+  ],
+  "zcode": {
+    "command": [
+      "C:\\Path\\To\\zcode.exe",
+      "--model",
+      "{model}",
+      "--output-format",
+      "json"
+    ],
+    "prompt_via_stdin": true,
+    "working_directory": "C:\\work",
+    "timeout_seconds": 900,
+    "history_turns": 6,
+    "default_model": "GLM-5.3",
+    "models": [
+      "GLM-5.3",
+      "GLM-5.3-Flash"
+    ]
+  }
+}
