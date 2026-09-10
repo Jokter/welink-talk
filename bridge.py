@@ -303,9 +303,97 @@ class Bridge:
         chats = self.state.setdefault("chats", {})
         pi = self.config["pi"]
         default_model = pi["default_model"]
-        if key not in chats or chats[key].get("model") not in pi["models"]:
-            chats[key] = {"model": default_model, "history": []}
-        return chats[key]
+        default_directory = pi.get("working_directory") or str(ROOT)
+        if key not in chats:
+            chats[key] = {
+                "model": default_model,
+                "history": [],
+                "working_directory": default_directory,
+            }
+        chat = chats[key]
+        if chat.get("model") not in pi["models"]:
+            chat["model"] = default_model
+            chat["history"] = []
+        try:
+            chat["working_directory"] = str(self.resolve_directory(
+                chat.get("working_directory") or default_directory
+            ))
+        except (OSError, ValueError):
+            chat["working_directory"] = str(self.resolve_directory(default_directory))
+        return chat
+
+    def allowed_roots(self) -> List[Path]:
+        pi = self.config["pi"]
+        values = pi.get("allowed_working_roots") or [pi.get("working_directory") or str(ROOT)]
+        return [Path(str(value)).expanduser().resolve() for value in values]
+
+    def resolve_directory(self, value: str) -> Path:
+        path = Path(value).expanduser().resolve()
+        if not path.is_dir():
+            raise ValueError(f"目录不存在：{value}")
+        normalized = os.path.normcase(os.path.abspath(str(path)))
+        for root in self.allowed_roots():
+            normalized_root = os.path.normcase(os.path.abspath(str(root)))
+            try:
+                if os.path.commonpath([normalized, normalized_root]) == normalized_root:
+                    return path
+            except ValueError:
+                continue
+        raise ValueError("目录不在允许的工作区内")
+
+    @staticmethod
+    def child_directories(current: Path) -> List[Path]:
+        try:
+            return sorted(
+                (item for item in current.iterdir() if item.is_dir() and not item.name.startswith(".")),
+                key=lambda item: item.name.lower(),
+            )
+        except OSError as exc:
+            raise ValueError(f"无法读取目录：{exc}") from exc
+
+    def directory_reply(self, key: str, argument: str) -> str:
+        chat = self.chat_state(key)
+        current = self.resolve_directory(chat["working_directory"])
+        action, _, value = argument.strip().partition(" ")
+        action = action or "当前"
+
+        if action in {"当前", "current"}:
+            return f"当前目录：{current}"
+        if action in {"默认", "default"}:
+            target = self.resolve_directory(str(self.config["pi"].get("working_directory") or self.allowed_roots()[0]))
+        elif action in {"返回", "上级", "back", "up"}:
+            target = self.resolve_directory(str(current.parent))
+        elif action in {"列表", "list", "ls"}:
+            children = self.child_directories(current)
+            if not children:
+                return f"当前目录没有子目录：{current}"
+            rows = [f"当前目录：{current}"]
+            rows.extend(f"{index}. {item.name}" for index, item in enumerate(children[:50], start=1))
+            if len(children) > 50:
+                rows.append(f"还有 {len(children) - 50} 个目录未显示")
+            rows.append("发送 /项目 进入 <序号或项目名>")
+            return "\n".join(rows)
+        elif action in {"进入", "切换", "enter", "cd"}:
+            if not value:
+                return "请指定项目路径、项目名或 /项目 列表 中的序号。"
+            children = self.child_directories(current)
+            if value.isdigit() and 1 <= int(value) <= len(children):
+                candidate = children[int(value) - 1]
+            else:
+                requested = Path(value).expanduser()
+                candidate = requested if requested.is_absolute() else current / requested
+            target = self.resolve_directory(str(candidate))
+        elif action in {"工作区", "roots"}:
+            rows = ["允许的工作区："]
+            rows.extend(f"{index}. {root}" for index, root in enumerate(self.allowed_roots(), start=1))
+            return "\n".join(rows)
+        else:
+            return "项目命令：/项目 当前、/项目 列表、/项目 进入 2、/项目 返回、/项目 切换 <路径>、/项目 默认"
+
+        chat["working_directory"] = str(target)
+        chat["history"] = []
+        self.save_state()
+        return f"已切换目录：{target}\n已开启新对话。"
 
     def model_reply(self, key: str, argument: str) -> str:
         pi = self.config["pi"]
@@ -362,7 +450,7 @@ class Bridge:
         result = run_process(
             command,
             timeout=int(pi.get("timeout_seconds", 900)),
-            cwd=pi.get("working_directory") or None,
+            cwd=chat.get("working_directory") or pi.get("working_directory") or None,
             stdin_text=stdin_text,
         )
         if result.returncode != 0:
@@ -397,10 +485,15 @@ class Bridge:
                 "/模型 列表：查看可用模型\n"
                 "/模型 当前：查看当前模型\n"
                 "/模型 切换 2：按序号切换模型\n"
+                "/项目 当前：查看当前项目\n"
+                "/项目 列表：查看可选项目\n"
+                "/项目 进入 2：切换项目\n"
                 "/新对话：清除上下文"
             )
         elif command in {"模型", "model"}:
             answer = self.model_reply(key, argument)
+        elif command in {"项目", "project"}:
+            answer = self.directory_reply(key, argument)
         elif command in {"新对话", "new"}:
             self.chat_state(key)["history"] = []
             self.save_state()
