@@ -1,5 +1,10 @@
 {
   "welink_cli": "welink-cli",
+  "welink_env": "pro",
+  "auto_refresh_auth": true,
+  "auth_refresh_interval_seconds": 1200,
+  "auth_refresh_retry_seconds": 60,
+  "auth_refresh_timeout_seconds": 60,
   "poll_interval_seconds": 5,
   "query_count": 20,
   "reply_max_chars": 3500,
