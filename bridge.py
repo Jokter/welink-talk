@@ -198,6 +198,8 @@ class Bridge:
         self.config = load_json(config_path, None)
         if not isinstance(self.config, dict):
             raise RuntimeError(f"配置文件不存在或格式错误：{config_path}")
+        if not isinstance(self.config.get("pi"), dict):
+            raise RuntimeError("配置尚未切换到 Pi，请重新执行 setup.ps1")
         self.state_path = ROOT / self.config.get("state_file", "state.json")
         self.state = load_json(self.state_path, {"seen": [], "chats": {}, "bootstrapped": False})
         self.seen_order = list(self.state.get("seen", []))
@@ -299,14 +301,15 @@ class Bridge:
 
     def chat_state(self, key: str) -> Dict[str, Any]:
         chats = self.state.setdefault("chats", {})
-        if key not in chats:
-            default_model = self.config["zcode"]["default_model"]
+        pi = self.config["pi"]
+        default_model = pi["default_model"]
+        if key not in chats or chats[key].get("model") not in pi["models"]:
             chats[key] = {"model": default_model, "history": []}
         return chats[key]
 
     def model_reply(self, key: str, argument: str) -> str:
-        zcode = self.config["zcode"]
-        models = zcode["models"]
+        pi = self.config["pi"]
+        models = pi["models"]
         chat = self.chat_state(key)
         if not argument:
             rows = ["可用模型："]
@@ -335,7 +338,7 @@ class Bridge:
 
     def make_prompt(self, chat: Dict[str, Any], user_text: str) -> str:
         history = chat.get("history", [])
-        limit = int(self.config["zcode"].get("history_turns", 6)) * 2
+        limit = int(self.config["pi"].get("history_turns", 6)) * 2
         lines = [
             "你正在通过手机聊天窗口回答用户。只输出最终答案，不展示思考过程、分析过程、工具调用过程或内部日志。",
             "回答应适合手机阅读。",
@@ -348,31 +351,32 @@ class Bridge:
         lines.append(f"\n用户的新消息：{user_text}")
         return "\n".join(lines)
 
-    def ask_zcode(self, key: str, user_text: str) -> str:
-        zcode = self.config["zcode"]
+    def ask_pi(self, key: str, user_text: str) -> str:
+        pi = self.config["pi"]
         chat = self.chat_state(key)
         model = chat["model"]
         prompt = self.make_prompt(chat, user_text)
         replacements = {"model": model, "prompt": prompt}
-        command = [str(part).format(**replacements) for part in zcode["command"]]
-        stdin_text = prompt if zcode.get("prompt_via_stdin", True) else None
+        command = [str(part).format(**replacements) for part in pi["command"]]
+        stdin_text = prompt if pi.get("prompt_via_stdin", True) else None
         result = run_process(
             command,
-            timeout=int(zcode.get("timeout_seconds", 900)),
-            cwd=zcode.get("working_directory") or None,
+            timeout=int(pi.get("timeout_seconds", 900)),
+            cwd=pi.get("working_directory") or None,
             stdin_text=stdin_text,
         )
         if result.returncode != 0:
-            raise RuntimeError("ZCode 执行失败，请在电脑端查看 bridge.log")
+            detail = result.stderr.strip()
+            raise RuntimeError(f"Pi 执行失败：{detail or '请在电脑端检查 Pi 登录和配置'}")
         answer = extract_final_answer(result.stdout)
         if not answer:
-            raise RuntimeError("ZCode 没有返回可识别的最终答案")
+            raise RuntimeError("Pi 没有返回可识别的最终答案")
         history = chat.setdefault("history", [])
         history.extend([
             {"role": "user", "content": user_text},
             {"role": "assistant", "content": answer},
         ])
-        chat["history"] = history[-int(zcode.get("history_turns", 6)) * 2:]
+        chat["history"] = history[-int(pi.get("history_turns", 6)) * 2:]
         self.save_state()
         return answer
 
@@ -389,7 +393,7 @@ class Bridge:
         command = command.lower()
         if command in {"帮助", "help"}:
             answer = (
-                "/问题内容：与 ZCode 对话\n"
+                "/问题内容：与 Pi 对话\n"
                 "/模型 列表：查看可用模型\n"
                 "/模型 当前：查看当前模型\n"
                 "/模型 切换 2：按序号切换模型\n"
@@ -402,7 +406,7 @@ class Bridge:
             self.save_state()
             answer = "已开启新会话。"
         else:
-            answer = self.ask_zcode(key, text)
+            answer = self.ask_pi(key, text)
         self.send(kind, chat, answer)
 
     def poll_once(self) -> None:
@@ -437,7 +441,7 @@ class Bridge:
 
     def run(self, once: bool = False) -> None:
         print(
-            f"WeLink ZCode bridge started. Polling every "
+            f"WeLink Pi bridge started. Polling every "
             f"{self.config.get('poll_interval_seconds', 5)} seconds.",
             flush=True,
         )
@@ -454,7 +458,7 @@ class Bridge:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="WeLink ↔ ZCode bridge")
+    parser = argparse.ArgumentParser(description="WeLink ↔ Pi bridge")
     parser.add_argument("--config", default=str(ROOT / "config.json"))
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
