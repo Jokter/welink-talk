@@ -35,6 +35,9 @@
     ],
     "prompt_via_stdin": true,
     "working_directory": "C:\\work",
+    "allowed_working_roots": [
+      "C:\\work"
+    ],
     "timeout_seconds": 900,
     "history_turns": 6,
     "default_model": "",
