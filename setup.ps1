@@ -1,7 +1,9 @@
 param(
     [string]$BotAccount = "p_xiaoluban",
     [Alias("ControlUserAccount")]
-    [string]$AllowedUserAccount = ""
+    [string]$AllowedUserAccount = "",
+    [string]$McpConfigPath = "",
+    [string]$McpServerName = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -56,7 +58,7 @@ $Config = Get-Content $ConfigSource -Raw | ConvertFrom-Json
 Write-Host ""
 Write-Host "=== WeLink Pi Bridge Setup ==="
 Write-Host ""
-Write-Host "[1/5] Refreshing the WeLink token..."
+Write-Host "[1/6] Refreshing the WeLink token..."
 & welink-cli auth login --env pro
 if ($LASTEXITCODE -ne 0) {
     throw "WeLink login or token refresh failed."
@@ -70,12 +72,6 @@ if ($StatusText -match "UID:\s*([^\s]+)") {
 if ($LoggedInUserAccount) {
     Write-Host "Signed-in WeLink UID: $LoggedInUserAccount"
 }
-if ($BotAccount -and $LoggedInUserAccount -and $LoggedInUserAccount -ne $BotAccount) {
-    Write-Warning "The WeLink PC account is '$LoggedInUserAccount', but the Pi bot account should be '$BotAccount'."
-    if (-not (Read-YesNo "Continue with the current WeLink account anyway?" $false)) {
-        throw "Sign in to WeLink PC as '$BotAccount', then run setup.ps1 again."
-    }
-}
 
 if ($Config.PSObject.Properties.Name -contains "bot_account") {
     $Config.bot_account = $BotAccount
@@ -85,26 +81,32 @@ else {
 }
 
 Write-Host ""
-Write-Host "[2/5] Configure the private control user."
+Write-Host "[2/6] Configure the private control user."
 $ExistingControlUser = ""
 if (@($Config.private_chats).Count -gt 0) {
-    $CandidateAccount = [string]$Config.private_chats[0].account
-    if ($CandidateAccount -and $CandidateAccount -notin @("a0012345", $BotAccount)) {
-        $ExistingControlUser = $CandidateAccount
+    $CandidateSender = [string]@($Config.private_chats[0].allowed_senders)[0]
+    if ($CandidateSender -and $CandidateSender -notin @("a0012345", $BotAccount)) {
+        $ExistingControlUser = $CandidateSender
     }
 }
 if (-not $AllowedUserAccount) {
-    $DefaultControlUser = if ($ExistingControlUser) { $ExistingControlUser } else { "w00789509" }
+    $DefaultControlUser = if ($LoggedInUserAccount) { $LoggedInUserAccount } elseif ($ExistingControlUser) { $ExistingControlUser } else { "w00789509" }
     $AllowedUserAccount = Read-WithDefault "WeLink user allowed to chat with the Pi bot" $DefaultControlUser
 }
 if (-not $AllowedUserAccount) {
     throw "A private control user is required."
 }
 Write-Host "Using allowed private user: $AllowedUserAccount"
+if ($LoggedInUserAccount -and $LoggedInUserAccount -ne $AllowedUserAccount) {
+    Write-Warning "welink-cli is signed in as '$LoggedInUserAccount', but the receiving user is '$AllowedUserAccount'."
+    if (-not (Read-YesNo "Continue with the current WeLink account anyway?" $false)) {
+        throw "Sign in to WeLink PC as '$AllowedUserAccount', then run setup.ps1 again."
+    }
+}
 
 $Config.private_chats = @(
     [pscustomobject]@{
-        account = $AllowedUserAccount
+        account = $BotAccount
         allowed_senders = @($AllowedUserAccount)
         trigger_prefix = "/"
     }
@@ -114,7 +116,7 @@ if ($Config.PSObject.Properties.Name -contains "group_chats") {
 }
 
 Write-Host ""
-Write-Host "[3/5] Discover Pi."
+Write-Host "[3/6] Discover Pi."
 $DiscoveryScript = Join-Path $ProjectDir "discover_pi.py"
 
 function Get-PiDiscovery {
@@ -207,7 +209,110 @@ Write-Host "Detected $($Models.Count) available models."
 Write-Host "Default model: $DefaultModel"
 
 Write-Host ""
-Write-Host "[4/5] Configure Pi workspaces."
+Write-Host "[4/6] Configure the WeLink MCP reply bridge."
+$ExistingMcpConfigPath = ""
+$ExistingMcpServerName = ""
+if (($Config.PSObject.Properties.Name -contains "reply") -and $Config.reply.mode -eq "mcp") {
+    $ExistingMcpConfigPath = [string]$Config.reply.config_path
+    $ExistingMcpServerName = [string]$Config.reply.server
+}
+
+if (-not $McpConfigPath) {
+    $McpDiscoveryText = (& python (Join-Path $ProjectDir "discover_mcp.py") 2>&1 | Out-String)
+    try {
+        $McpDiscovery = $McpDiscoveryText | ConvertFrom-Json
+        $McpCandidates = @($McpDiscovery.servers)
+    }
+    catch {
+        $McpCandidates = @()
+    }
+    $PreferredMcp = @($McpCandidates | Where-Object { $_.server -eq "welink-msg" -and $_.transport -eq "stdio" }) | Select-Object -First 1
+    if (-not $PreferredMcp) {
+        $PreferredMcp = @($McpCandidates | Where-Object { $_.likely_welink -and $_.transport -eq "stdio" }) | Select-Object -First 1
+    }
+    if ($PreferredMcp) {
+        $McpConfigPath = [string]$PreferredMcp.config_path
+        if (-not $McpServerName) {
+            $McpServerName = [string]$PreferredMcp.server
+        }
+    }
+}
+if (-not $McpConfigPath) {
+    $UserProfilePath = [Environment]::GetFolderPath("UserProfile")
+    $DefaultMcpPath = if ($ExistingMcpConfigPath) { $ExistingMcpConfigPath } else { Join-Path $UserProfilePath ".pi\agent\mcp.json" }
+    $McpConfigPath = Read-WithDefault "Pi MCP config file" $DefaultMcpPath
+}
+if (-not (Test-Path $McpConfigPath -PathType Leaf)) {
+    throw "Pi MCP config file does not exist: $McpConfigPath"
+}
+
+try {
+    $McpConfig = Get-Content $McpConfigPath -Raw | ConvertFrom-Json
+}
+catch {
+    throw "Pi MCP config is not valid JSON: $McpConfigPath"
+}
+$McpServerNames = @($McpConfig.mcpServers.PSObject.Properties.Name)
+if (-not $McpServerName) {
+    if ($ExistingMcpServerName -and $ExistingMcpServerName -in $McpServerNames) {
+        $McpServerName = $ExistingMcpServerName
+    }
+    elseif ("welink-msg" -in $McpServerNames) {
+        $McpServerName = "welink-msg"
+    }
+    elseif ($McpServerNames.Count -eq 1) {
+        $McpServerName = [string]$McpServerNames[0]
+    }
+    else {
+        Write-Host "Available MCP servers:"
+        for ($Index = 0; $Index -lt $McpServerNames.Count; $Index++) {
+            Write-Host ("  {0}. {1}" -f ($Index + 1), $McpServerNames[$Index])
+        }
+        $McpServerName = Read-WithDefault "MCP server name" "welink-msg"
+    }
+}
+if ($McpServerName -notin $McpServerNames) {
+    throw "MCP server was not found in the config: $McpServerName"
+}
+$McpServerConfig = $McpConfig.mcpServers.PSObject.Properties[$McpServerName].Value
+if (-not $McpServerConfig.command) {
+    throw "The direct bridge currently requires a stdio MCP server with a command."
+}
+$McpCheckText = (& python (Join-Path $ProjectDir "mcp_client.py") --config $McpConfigPath --server $McpServerName --timeout 120 --list-tools 2>&1 | Out-String)
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to start the MCP server or list its tools: $McpCheckText"
+}
+try {
+    $McpTools = @(($McpCheckText | ConvertFrom-Json).tools)
+}
+catch {
+    throw "The MCP tool check returned invalid JSON."
+}
+if ("send_welink_message" -notin $McpTools) {
+    throw "The MCP server does not provide send_welink_message."
+}
+$McpTimeoutSeconds = 120
+if ($McpServerConfig.timeoutMs) {
+    $McpTimeoutSeconds = [Math]::Max(1, [Math]::Ceiling([double]$McpServerConfig.timeoutMs / 1000))
+}
+$ReplyConfig = [pscustomobject]@{
+    mode = "mcp"
+    config_path = [System.IO.Path]::GetFullPath($McpConfigPath)
+    server = $McpServerName
+    tool = "send_welink_message"
+    timeout_seconds = $McpTimeoutSeconds
+}
+if ($Config.PSObject.Properties.Name -contains "reply") {
+    $Config.reply = $ReplyConfig
+}
+else {
+    $Config | Add-Member -NotePropertyName "reply" -NotePropertyValue $ReplyConfig
+}
+Write-Host "Detected MCP server: $McpServerName"
+Write-Host "Detected reply tool: send_welink_message"
+
+Write-Host ""
+Write-Host "[5/6] Configure Pi workspaces."
 $ExistingWorkingDirectory = [string]$Config.pi.working_directory
 if (-not $ExistingWorkingDirectory -or $ExistingWorkingDirectory -eq "C:\work") {
     $ExistingWorkingDirectory = (Get-Location).Path
@@ -250,12 +355,13 @@ $Utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($ConfigPath, $ConfigJson, $Utf8WithoutBom)
 
 Write-Host ""
-Write-Host "[5/5] Setup completed."
+Write-Host "[6/6] Setup completed."
 if ($LoggedInUserAccount) {
-    Write-Host "  Signed-in bot UID: $LoggedInUserAccount"
+    Write-Host "  Signed-in user UID: $LoggedInUserAccount"
 }
-Write-Host "  Pi bot account:    $BotAccount"
-Write-Host "  Allowed user:      $AllowedUserAccount"
+Write-Host "  Bot chat account:  $BotAccount"
+Write-Host "  Allowed sender:    $AllowedUserAccount"
+Write-Host "  Reply bridge:      $McpServerName/send_welink_message"
 Write-Host ("  Pi command:       {0}" -f (@($Config.pi.command) -join " "))
 Write-Host "  Default model:   $DefaultModel"
 Write-Host "  Working directory: $WorkingDirectory"
