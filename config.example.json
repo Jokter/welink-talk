@@ -6,6 +6,7 @@
   "auth_refresh_retry_seconds": 60,
   "auth_refresh_timeout_seconds": 60,
   "poll_interval_seconds": 5,
+  "query_count": 5,
   "reply_max_chars": 3500,
   "state_file": "state.json",
   "bot_account": "p_xiaoluban",
