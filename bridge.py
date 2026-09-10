@@ -204,6 +204,51 @@ class Bridge:
         self.seen = set(self.seen_order)
         self.dry_run = dry_run
         self.welink_cli = self.config.get("welink_cli", "welink-cli")
+        self.auth_ready = not self.config.get("auto_refresh_auth", True)
+        self.next_auth_refresh_at = 0.0
+        self.last_auth_error = ""
+
+    def refresh_auth(self, force: bool = False) -> None:
+        if not self.config.get("auto_refresh_auth", True):
+            return
+        now = time.monotonic()
+        if not force and now < self.next_auth_refresh_at:
+            if not self.auth_ready:
+                raise RuntimeError(self.last_auth_error or "WeLink authentication is unavailable")
+            return
+
+        environment = str(self.config.get("welink_env", "pro"))
+        timeout = int(self.config.get("auth_refresh_timeout_seconds", 60))
+        result = run_process(
+            [self.welink_cli, "auth", "login", "--env", environment],
+            timeout=timeout,
+        )
+        if result.returncode != 0:
+            self.last_auth_error = (
+                "WeLink token refresh failed. Ensure WeLink PC is signed in, then run "
+                f"`welink-cli auth login --env {environment}`."
+            )
+            self.next_auth_refresh_at = now + float(
+                self.config.get("auth_refresh_retry_seconds", 60)
+            )
+            if not self.auth_ready:
+                raise RuntimeError(self.last_auth_error)
+            return
+
+        self.auth_ready = True
+        self.last_auth_error = ""
+        self.next_auth_refresh_at = now + float(
+            self.config.get("auth_refresh_interval_seconds", 1200)
+        )
+
+    def run_welink(self, command: List[str], timeout: int = 30) -> subprocess.CompletedProcess[str]:
+        self.refresh_auth()
+        result = run_process(command, timeout=timeout)
+        if result.returncode == 0 or not self.config.get("auto_refresh_auth", True):
+            return result
+
+        self.refresh_auth(force=True)
+        return run_process(command, timeout=timeout)
 
     def save_state(self) -> None:
         self.seen_order = self.seen_order[-5000:]
@@ -229,7 +274,7 @@ class Bridge:
         else:
             command += ["--group-id", chat["group_id"]]
         command += ["--query-count", str(self.config.get("query_count", 20))]
-        result = run_process(command, timeout=30)
+        result = self.run_welink(command, timeout=30)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "查询 WeLink 消息失败")
         key = f"{kind}:{chat.get('account') or chat.get('group_id')}"
@@ -247,7 +292,7 @@ class Bridge:
                 command = [self.welink_cli, "im", "send-to-user", "--receiver", chat["account"]]
             else:
                 command = [self.welink_cli, "im", "send-to-group", "--group-id", chat["group_id"]]
-            result = run_process(command + ["--text", prefix + part], timeout=30)
+            result = self.run_welink(command + ["--text", prefix + part], timeout=30)
             if result.returncode != 0:
                 raise RuntimeError(result.stderr.strip() or "发送 WeLink 消息失败")
 
