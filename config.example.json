@@ -24,22 +24,20 @@
       "trigger_prefix": "/"
     }
   ],
-  "zcode": {
+  "pi": {
     "command": [
-      "C:\\Path\\To\\zcode.exe",
+      "pi",
       "--model",
       "{model}",
-      "--output-format",
-      "json"
+      "--no-session",
+      "--no-approve",
+      "-p"
     ],
     "prompt_via_stdin": true,
     "working_directory": "C:\\work",
     "timeout_seconds": 900,
     "history_turns": 6,
-    "default_model": "GLM-5.3",
-    "models": [
-      "GLM-5.3",
-      "GLM-5.3-Flash"
-    ]
+    "default_model": "",
+    "models": []
   }
 }
