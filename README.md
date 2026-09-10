@@ -11,18 +11,25 @@
    .\setup.ps1
    ```
 
-3. 编辑生成的 `config.json`：
+3. 按提示输入专用控制群的准确名称。脚本会自动读取当前登录 UID、查询群 ID，并写入 `config.json`。
+4. 编辑生成的 `config.json`：
    - `private_chats`：允许交互的私聊账号。
    - `group_chats`：专用群 ID、允许发送者和触发前缀。
    - `zcode.command`：你当前 ZCode 版本真实可用的非交互命令。
    - `zcode.models`：手机上允许选择的模型。
-4. 启动：
+5. 启动：
 
    ```powershell
    .\start.ps1
    ```
 
 首次启动只记录最近消息，不执行旧消息。启动后再从手机发送新消息。
+
+也可以跳过群名称查询，直接提供群 ID：
+
+```powershell
+.\setup.ps1 -GroupId "1234567891011"
+```
 
 ## WeLink 登录续期
 
