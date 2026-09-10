@@ -443,6 +443,7 @@ class Bridge:
             allowed = {str(item).lower() for item in chat.get("allowed_senders", [])}
             expected_receiver = str(chat.get("account", "")).lower()
             messages = self.query(kind, chat)
+            candidates: List[Dict[str, str]] = []
             for message in messages:
                 if message["id"] in self.seen:
                     continue
@@ -451,16 +452,20 @@ class Bridge:
                     continue
                 if expected_receiver and message.get("receiver", "").lower() != expected_receiver:
                     continue
+                candidates.append(message)
+            if not candidates:
+                continue
+            message = candidates[-1]
+            try:
+                self.handle(key, kind, chat, message["sender"], message["text"])
+            except subprocess.TimeoutExpired:
+                self.send_via_mcp(key, message["sender"], "本次处理超时，请缩小问题后重试。")
+            except Exception as exc:
+                self.log_error(key, exc)
                 try:
-                    self.handle(key, kind, chat, message["sender"], message["text"])
-                except subprocess.TimeoutExpired:
-                    self.send_via_mcp(key, message["sender"], "本次处理超时，请缩小问题后重试。")
-                except Exception as exc:
-                    self.log_error(key, exc)
-                    try:
-                        self.send_via_mcp(key, message["sender"], f"处理失败：{exc}")
-                    except Exception as reply_exc:
-                        self.log_error(key, reply_exc)
+                    self.send_via_mcp(key, message["sender"], f"处理失败：{exc}")
+                except Exception as reply_exc:
+                    self.log_error(key, reply_exc)
         self.save_state()
 
     @staticmethod
