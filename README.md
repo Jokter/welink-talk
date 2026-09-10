@@ -97,9 +97,9 @@ pi --model {model} --no-session --no-approve -p
 .\start.ps1
 ```
 
-首次启动会处理最近1条尚未去重的消息。之后通过消息 ID 去重，不会重复执行同一条消息。
+每次轮询会读取最近5条消息，再按发送者、接收者和消息 ID 过滤。首次启动会处理其中尚未去重的用户消息，之后不会重复执行同一条消息。
 
-程序以 `w00789509` 的登录身份，每5秒只查询它与 `p_xiaoluban` 会话中的最新1条消息，并同时校验 `sender=w00789509` 和 `receiver=p_xiaoluban`。Pi 只生成最终答案；回复不经过 Pi 决策或 `welink-cli`，而由桥接程序直接调用 MCP，以 `p_xiaoluban` 身份发送。
+程序以 `w00789509` 的登录身份，每5秒查询它与 `p_xiaoluban` 会话中的最近5条消息，并同时校验 `sender=w00789509` 和 `receiver=p_xiaoluban`。Pi 只生成最终答案；回复不经过 Pi 决策或 `welink-cli`，而由桥接程序直接调用 MCP，以 `p_xiaoluban` 身份发送。
 
 停止服务：
 
