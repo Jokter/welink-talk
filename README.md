@@ -68,11 +68,16 @@ pi --model {model} --no-session --no-approve -p
 
 ```text
 /帮我分析当前项目的目录结构
+/帮助
+/帮助 模型
+/帮助 dir
 /模型 列表
 /模型 当前
 /模型 切换 2
 /模型 切换 openai/gpt-5
-/dir
+/模型 help
+/dir help
+/dir current
 /dir roots
 /dir list
 /dir cd 2
