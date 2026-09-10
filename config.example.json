@@ -11,15 +11,8 @@
   "state_file": "state.json",
   "private_chats": [
     {
-      "account": "a0012345",
-      "allowed_senders": ["a0012345"],
-      "trigger_prefix": "/"
-    }
-  ],
-  "group_chats": [
-    {
-      "group_id": "1234567891011",
-      "allowed_senders": ["a0012345"],
+      "account": "p_xiaoluban",
+      "allowed_senders": ["p_xiaoluban"],
       "trigger_prefix": "/"
     }
   ],
