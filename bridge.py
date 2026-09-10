@@ -267,20 +267,21 @@ class Bridge:
     def conversations(self) -> Iterable[Tuple[str, str, Dict[str, Any]]]:
         for chat in self.config.get("private_chats", []):
             yield f"user:{chat['account']}", "user", chat
-        for chat in self.config.get("group_chats", []):
-            yield f"group:{chat['group_id']}", "group", chat
 
     def query(self, kind: str, chat: Dict[str, Any]) -> List[Dict[str, str]]:
-        command = [self.welink_cli, "im", "query-history-message"]
-        if kind == "user":
-            command += ["--user-account", chat["account"]]
-        else:
-            command += ["--group-id", chat["group_id"]]
-        command += ["--query-count", "1"]
+        command = [
+            self.welink_cli,
+            "im",
+            "query-history-message",
+            "--user-account",
+            chat["account"],
+            "--query-count",
+            "1",
+        ]
         result = self.run_welink(command, timeout=30)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "查询 WeLink 消息失败")
-        key = f"{kind}:{chat.get('account') or chat.get('group_id')}"
+        key = f"user:{chat['account']}"
         return parse_messages(result.stdout, key)
 
     def send(self, kind: str, chat: Dict[str, Any], text: str) -> None:
@@ -291,10 +292,7 @@ class Bridge:
             if self.dry_run:
                 print(f"DRY-RUN reply to {kind}: {prefix}{part}")
                 continue
-            if kind == "user":
-                command = [self.welink_cli, "im", "send-to-user", "--receiver", chat["account"]]
-            else:
-                command = [self.welink_cli, "im", "send-to-group", "--group-id", chat["group_id"]]
+            command = [self.welink_cli, "im", "send-to-user", "--receiver", chat["account"]]
             result = self.run_welink(command + ["--text", prefix + part], timeout=30)
             if result.returncode != 0:
                 raise RuntimeError(result.stderr.strip() or "发送 WeLink 消息失败")
