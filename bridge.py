@@ -357,16 +357,16 @@ class Bridge:
         action, _, value = argument.strip().partition(" ")
         action = action or "help"
 
-        if action in {"帮助", "help"}:
+        if action == "help":
             return self.help_reply("dir")
 
-        if action in {"当前", "current"}:
+        if action == "current":
             return f"当前目录：{current}"
-        if action in {"默认", "default", "root"}:
+        if action in {"default", "root"}:
             target = self.resolve_directory(str(self.config["pi"].get("working_directory") or self.allowed_roots()[0]))
-        elif action in {"返回", "上级", "back", "up"}:
+        elif action in {"back", "up"}:
             target = self.resolve_directory(str(current.parent))
-        elif action in {"列表", "list", "ls"}:
+        elif action in {"list", "ls"}:
             children = self.child_directories(current)
             if not children:
                 return f"当前目录没有子目录：{current}"
@@ -376,7 +376,7 @@ class Bridge:
                 rows.append(f"还有 {len(children) - 50} 个目录未显示")
             rows.append("发送 /dir cd <序号或项目名>")
             return "\n".join(rows)
-        elif action in {"进入", "切换", "enter", "cd"}:
+        elif action in {"enter", "cd"}:
             if not value:
                 return "请指定项目路径、项目名或 /dir list 中的序号。"
             children = self.child_directories(current)
@@ -386,7 +386,7 @@ class Bridge:
                 requested = Path(value).expanduser()
                 candidate = requested if requested.is_absolute() else current / requested
             target = self.resolve_directory(str(candidate))
-        elif action in {"工作区", "roots"}:
+        elif action == "roots":
             rows = ["允许的工作区："]
             rows.extend(f"{index}. {root}" for index, root in enumerate(self.allowed_roots(), start=1))
             return "\n".join(rows)
@@ -403,27 +403,27 @@ class Bridge:
         models = pi["models"]
         chat = self.chat_state(key)
         selected = argument.strip()
-        if not selected or selected in {"帮助", "help"}:
-            return self.help_reply("模型")
-        if selected == "列表":
+        if not selected or selected == "help":
+            return self.help_reply("model")
+        if selected == "list":
             rows = ["可用模型："]
             for index, model in enumerate(models, start=1):
                 mark = "（当前）" if model == chat["model"] else ""
                 rows.append(f"{index}. {model}{mark}")
-            rows.append("发送 /模型 切换 <序号或模型名> 进行切换")
+            rows.append("发送 /model switch <序号或模型名> 进行切换")
             return "\n".join(rows)
 
-        if selected == "当前":
+        if selected == "current":
             return f"当前模型：{chat['model']}"
-        if selected.startswith("切换 "):
-            selected = selected[3:].strip()
+        if selected.startswith("switch "):
+            selected = selected[7:].strip()
         else:
-            return f"不支持的模型子命令：{selected}\n\n{self.help_reply('模型')}"
+            return f"不支持的 model 子命令：{selected}\n\n{self.help_reply('model')}"
         if selected.isdigit() and 1 <= int(selected) <= len(models):
             selected = models[int(selected) - 1]
         exact = next((model for model in models if model.lower() == selected.lower()), None)
         if not exact:
-            return f"模型不存在：{selected}\n\n{self.help_reply('模型')}"
+            return f"模型不存在：{selected}\n\n{self.help_reply('model')}"
         chat["model"] = exact
         chat["history"] = []
         self.save_state()
@@ -432,14 +432,14 @@ class Bridge:
     @staticmethod
     def help_reply(topic: str = "") -> str:
         normalized = topic.strip().lower()
-        if normalized in {"模型", "model"}:
+        if normalized == "model":
             return (
-                "模型命令：\n"
-                "/模型 列表    查看可用模型\n"
-                "/模型 当前    查看当前模型\n"
-                "/模型 切换 2    按序号切换\n"
-                "/模型 切换 <模型名>    按名称切换\n"
-                "/模型 help    显示本帮助"
+                "Model 命令：\n"
+                "/model list    查看可用模型\n"
+                "/model current    查看当前模型\n"
+                "/model switch 2    按序号切换\n"
+                "/model switch <模型名>    按名称切换\n"
+                "/model help    显示本帮助"
             )
         if normalized == "dir":
             return (
@@ -453,16 +453,16 @@ class Bridge:
                 "/dir root    返回默认目录\n"
                 "/dir help    显示本帮助"
             )
-        if normalized in {"新对话", "new"}:
-            return "新对话命令：\n/新对话    清除当前项目的最近对话上下文\n/新对话 help    显示本帮助"
+        if normalized == "new":
+            return "New 命令：\n/new    清除当前项目的最近对话上下文\n/new help    显示本帮助"
         return (
             "可用命令：\n"
-            "/帮助 模型    查看模型命令\n"
-            "/帮助 dir    查看项目目录命令\n"
-            "/帮助 新对话    查看新对话命令\n"
-            "/模型 help    查看模型子命令\n"
+            "/help model    查看模型命令\n"
+            "/help dir    查看项目目录命令\n"
+            "/help new    查看新对话命令\n"
+            "/model help    查看模型子命令\n"
             "/dir help    查看目录子命令\n"
-            "/新对话    清除当前对话\n"
+            "/new    清除当前对话\n"
             "/问题内容    直接询问 Pi"
         )
 
@@ -521,15 +521,15 @@ class Bridge:
         print(f"Received command from {key}.", flush=True)
         command, _, argument = text.partition(" ")
         command = command.lower()
-        if command in {"帮助", "help"}:
+        if command == "help":
             answer = self.help_reply(argument)
-        elif command in {"模型", "model"}:
+        elif command == "model":
             answer = self.model_reply(key, argument)
         elif command == "dir":
             answer = self.directory_reply(key, argument)
-        elif command in {"新对话", "new"}:
-            if argument.strip() in {"帮助", "help"}:
-                answer = self.help_reply("新对话")
+        elif command == "new":
+            if argument.strip() == "help":
+                answer = self.help_reply("new")
             else:
                 self.chat_state(key)["history"] = []
                 self.save_state()
