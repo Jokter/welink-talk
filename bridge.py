@@ -240,6 +240,7 @@ class Bridge:
         self.next_auth_refresh_at = now + float(
             self.config.get("auth_refresh_interval_seconds", 1200)
         )
+        print("WeLink token refreshed.", flush=True)
 
     def run_welink(self, command: List[str], timeout: int = 30) -> subprocess.CompletedProcess[str]:
         self.refresh_auth()
@@ -383,6 +384,7 @@ class Bridge:
         text = text[len(prefix):].strip()
         if not text:
             return
+        print(f"Received command from {key}.", flush=True)
         command, _, argument = text.partition(" ")
         command = command.lower()
         if command in {"帮助", "help"}:
@@ -428,10 +430,17 @@ class Bridge:
 
     @staticmethod
     def log_error(key: str, exc: Exception) -> None:
+        message = f"{time.strftime('%Y-%m-%d %H:%M:%S')} [{key}] {type(exc).__name__}: {exc}"
         with (ROOT / "bridge.log").open("a", encoding="utf-8") as stream:
-            stream.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [{key}] {type(exc).__name__}: {exc}\n")
+            stream.write(message + "\n")
+        print(message, file=sys.stderr, flush=True)
 
     def run(self, once: bool = False) -> None:
+        print(
+            f"WeLink ZCode bridge started. Polling every "
+            f"{self.config.get('poll_interval_seconds', 5)} seconds.",
+            flush=True,
+        )
         while True:
             try:
                 self.poll_once()
