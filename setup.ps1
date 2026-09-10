@@ -1,7 +1,5 @@
 param(
-    [string]$GroupName = "",
-    [string]$GroupId = "",
-    [string]$UserAccount = ""
+    [string]$ControlUserAccount = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,78 +61,42 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $StatusText = (& welink-cli auth status 2>&1 | Out-String)
-if (-not $UserAccount -and $StatusText -match "UID:\s*([^\s]+)") {
-    $UserAccount = $Matches[1]
+$LoggedInUserAccount = ""
+if ($StatusText -match "UID:\s*([^\s]+)") {
+    $LoggedInUserAccount = $Matches[1]
 }
-$UserAccount = Read-WithDefault "Allowed WeLink UID" $UserAccount
-if (-not $UserAccount) {
-    throw "A WeLink UID is required."
+if ($LoggedInUserAccount) {
+    Write-Host "Signed-in WeLink UID: $LoggedInUserAccount"
 }
-Write-Host "Using WeLink UID: $UserAccount"
 
 Write-Host ""
-Write-Host "[2/5] Configure the control group."
-$ExistingGroupId = ""
-if (@($Config.group_chats).Count -gt 0) {
-    $CandidateGroupId = [string]$Config.group_chats[0].group_id
-    if ($CandidateGroupId -and $CandidateGroupId -ne "1234567891011") {
-        $ExistingGroupId = $CandidateGroupId
+Write-Host "[2/5] Configure the private control user."
+$ExistingControlUser = ""
+if (@($Config.private_chats).Count -gt 0) {
+    $CandidateAccount = [string]$Config.private_chats[0].account
+    if ($CandidateAccount -and $CandidateAccount -ne "a0012345") {
+        $ExistingControlUser = $CandidateAccount
     }
 }
-
-if (-not $GroupId) {
-    if (-not $GroupName) {
-        $GroupName = Read-WithDefault "Exact group name, or enter a numeric group ID" $ExistingGroupId
-    }
-    if ($GroupName -match "^\d+$") {
-        $GroupId = $GroupName
-    }
-    elseif ($GroupName) {
-        Write-Host "Searching for WeLink group '$GroupName'..."
-        $SearchText = (& welink-cli search group --text $GroupName 2>&1 | Out-String)
-        if ($LASTEXITCODE -ne 0) {
-            throw "The WeLink group search failed."
-        }
-        try {
-            $SearchResult = $SearchText | ConvertFrom-Json
-        }
-        catch {
-            throw "The WeLink group search did not return valid JSON."
-        }
-
-        $Groups = @($SearchResult.search_group_cli.data)
-        $ExactGroups = @($Groups | Where-Object { $_.groupName -eq $GroupName })
-        if ($ExactGroups.Count -eq 1) {
-            $GroupId = [string]$ExactGroups[0].groupId
-        }
-        elseif ($Groups.Count -eq 1) {
-            $GroupId = [string]$Groups[0].groupId
-        }
-        elseif ($Groups.Count -gt 1) {
-            for ($Index = 0; $Index -lt $Groups.Count; $Index++) {
-                Write-Host ("  {0}. {1} ({2})" -f ($Index + 1), $Groups[$Index].groupName, $Groups[$Index].groupId)
-            }
-            $Selection = Read-WithDefault "Select a group number" "1"
-            if ($Selection -notmatch "^\d+$" -or [int]$Selection -lt 1 -or [int]$Selection -gt $Groups.Count) {
-                throw "Invalid group selection."
-            }
-            $GroupId = [string]$Groups[[int]$Selection - 1].groupId
-        }
-    }
+if (-not $ControlUserAccount) {
+    $DefaultControlUser = if ($ExistingControlUser) { $ExistingControlUser } else { "p_xiaoluban" }
+    $ControlUserAccount = Read-WithDefault "WeLink account allowed to control Pi" $DefaultControlUser
 }
-if (-not $GroupId) {
-    throw "The control group was not found."
+if (-not $ControlUserAccount) {
+    throw "A private control user is required."
 }
-Write-Host "Using control group ID: $GroupId"
+Write-Host "Using private control user: $ControlUserAccount"
 
-$Config.private_chats = @()
-$Config.group_chats = @(
+$Config.private_chats = @(
     [pscustomobject]@{
-        group_id = $GroupId
-        allowed_senders = @($UserAccount)
+        account = $ControlUserAccount
+        allowed_senders = @($ControlUserAccount)
         trigger_prefix = "/"
     }
 )
+if ($Config.PSObject.Properties.Name -contains "group_chats") {
+    $Config.PSObject.Properties.Remove("group_chats")
+}
 
 Write-Host ""
 Write-Host "[3/5] Discover Pi."
@@ -274,8 +236,10 @@ $Utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
 
 Write-Host ""
 Write-Host "[5/5] Setup completed."
-Write-Host "  WeLink UID:      $UserAccount"
-Write-Host "  Control group:   $GroupId"
+if ($LoggedInUserAccount) {
+    Write-Host "  Signed-in UID:     $LoggedInUserAccount"
+}
+Write-Host "  Control user:      $ControlUserAccount"
 Write-Host ("  Pi command:       {0}" -f (@($Config.pi.command) -join " "))
 Write-Host "  Default model:   $DefaultModel"
 Write-Host "  Working directory: $WorkingDirectory"
