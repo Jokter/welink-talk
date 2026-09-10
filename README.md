@@ -1,106 +1,108 @@
-# WeLink ZCode Bridge
+# WeLink Pi Bridge
 
-通过 WeLink 私聊或专用群，在手机上与电脑中的 ZCode 交互。第一版仅包含对话、模型切换和会话重置。所有有效消息都必须以 `/` 开头，其他消息会被忽略。
+通过 WeLink 私聊或专用群，在手机上调用电脑中的 Pi coding agent。所有有效消息必须以 `/` 开头，其他消息会被忽略。
 
-## 使用方式
+## 快速开始
 
-1. 安装 Python 3.10+、`welink-cli` 和 ZCode，并确保三者都可在电脑上正常使用。
-2. PowerShell 进入项目目录，执行配置向导：
+环境要求：
 
-   ```powershell
-   .\setup.ps1
-   ```
+- Windows PowerShell 5 或 PowerShell 7。
+- Python 3.10+。
+- Node.js 和 npm。
+- `welink-cli`。
+- 已登录的 WeLink PC 客户端。
 
-3. 根据提示依次配置：
-   - 当前 WeLink UID。
-   - 专用控制群名称或群 ID。
-   - 自动扫描 `%USERPROFILE%\.zcode` 和 PATH，定位 ZCode 命令。
-   - 读取 ZCode 帮助信息，推断参数和问题输入方式。
-   - 从 ZCode 模型命令与本地配置中发现模型。
-   - 选择工作目录。
-4. 确认配置后，向导可以直接启动服务。以后也可以单独启动：
-
-   ```powershell
-   .\start.ps1
-   ```
-
-首次启动只记录最近消息，不执行旧消息。启动后再从手机发送新消息。
-
-向导会保留已有配置作为默认值，直接按回车即可沿用。也可以通过参数提前提供群 ID：
+进入项目目录后执行：
 
 ```powershell
-.\setup.ps1 -GroupId "1234567891011"
+.\setup.ps1
 ```
 
-ZCode 的安装目录按当前 Windows 用户动态计算：
+向导会自动：
+
+1. 刷新 WeLink Token并识别当前 UID。
+2. 根据群名称查询控制群 ID。
+3. 检查 Pi；未安装时询问是否自动安装。
+4. 调用 `pi --list-models` 读取已认证的模型。
+5. 读取 Pi 的默认模型。
+6. 生成只保存在本机的 `config.json`。
+7. 询问是否立即启动桥接服务。
+
+Pi 的安装命令为：
+
+```powershell
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+```
+
+如果还没有登录模型提供方，先运行：
+
+```powershell
+pi
+```
+
+然后在 Pi 中执行：
 
 ```text
-%USERPROFILE%\.zcode
+/login
 ```
 
-不会硬编码具体用户名。自动发现不足时，向导才会要求手工确认缺失项。
+完成后退出 Pi，再重新执行 `.\setup.ps1`。
 
-## WeLink 登录续期
+## Pi 调用方式
 
-程序启动时会通过已登录的 WeLink PC 客户端刷新 Token，之后默认每20分钟自动刷新一次。消息查询或发送失败时，还会强制刷新并重试一次。一般不需要重复扫码。
+桥接程序使用 Pi 官方非交互打印模式：
 
-```json
-"welink_env": "pro",
-"auto_refresh_auth": true,
-"auth_refresh_interval_seconds": 1200
+```text
+pi --model {model} --no-session --no-approve -p
 ```
 
-如果 WeLink PC 已退出登录，程序会在 `bridge.log` 中记录认证错误。重新登录 WeLink PC 后，桥接程序会继续尝试恢复。
+完整问题通过标准输入传入。Pi 只把最终回复写入标准输出，因此手机不会看到思考过程、工具调用过程或终端界面。
+
+- `--model`：选择当前会话模型。
+- `--no-session`：不创建 Pi 会话文件；最近对话由桥接程序管理。
+- `--no-approve`：不加载未经信任的项目本地扩展和配置。
+- `-p`：输出最终回复后退出。
 
 ## 手机命令
 
-私聊或群聊中，以 `/` 开头的内容会发送给 ZCode：
-
 ```text
 /帮我分析当前项目的目录结构
+/模型 列表
+/模型 当前
+/模型 切换 2
+/模型 切换 openai/gpt-5
+/新对话
+/帮助
 ```
 
-控制命令：
+每个 WeLink 私聊或群聊分别保存模型和最近六轮上下文。切换模型时自动清除旧上下文。
+
+## 启动与停止
+
+完成配置后启动：
+
+```powershell
+.\start.ps1
+```
+
+首次启动只记录已有消息，不执行历史指令。启动后再发送一条新的 `/` 指令。
+
+停止服务：
 
 ```text
-/模型 列表            查看模型
-/模型 当前            查看当前模型
-/模型 切换 2          按序号切换模型
-/模型 切换 GLM-5.3    按名称切换模型
-/新对话               清除当前会话上下文
-/帮助                 查看帮助
+Ctrl+C
 ```
 
-每个私聊或群聊分别保存模型和最近六轮上下文。切换模型时自动开始新会话。
+## WeLink Token 续期
 
-## 只回传最终结果
+程序启动时刷新一次 Token，之后默认每20分钟刷新。消息查询或发送失败时，还会强制刷新并重试一次。只要 WeLink PC 保持登录，一般不需要再次扫码。
 
-桥接程序只读取 ZCode 的标准输出，不会把标准错误中的运行日志发到手机。对于 JSON/JSONL 输出，只提取 `final`、`answer`、`result` 等最终结果字段；文本中的 `<think>...</think>` 和 reasoning 代码块也会被移除。
+## 本地文件
 
-最可靠的方式仍然是让 `zcode.command` 使用 ZCode 自带的 JSON 和 final-only/print 模式。不同版本参数可能不同，请以你电脑上 ZCode 的帮助信息为准。
+- `config.json`：本机配置，不提交 Git。
+- `state.json`：消息去重、模型和对话状态，不提交 Git。
+- `bridge.log`：运行错误，不提交 Git。
 
-## ZCode 命令模板
+## 安全边界
 
-命令的每个参数必须作为数组中的独立元素：
-
-```json
-"command": [
-  "C:\\Path\\To\\zcode.exe",
-  "--model",
-  "{model}",
-  "--output-format",
-  "json"
-]
-```
-
-支持两个占位符：
-
-- `{model}`：当前会话选择的模型。
-- `{prompt}`：完整问题。如果 `prompt_via_stdin` 为 `true`，通常不需要把 `{prompt}` 放进命令。
-
-## 当前边界
-
-- CLI 文档没有实时消息订阅能力，因此采用每5秒查询一次历史消息。
-- 当前版本一次处理一个问题，适合个人使用。
-- 需要使用单独的 WeLink 机器人账号运行，否则可能无法正确区分自己发出的回复。
-- ZCode 的命令行参数尚未统一公开，必须填入你电脑上实际可执行的命令。
+Pi 默认拥有启动用户的文件、进程和网络权限。请只允许自己的 WeLink UID，并将其放在专用控制群中。当前默认使用 `--no-approve`，避免自动加载项目本地扩展；Pi 自带的文件和命令工具仍具有当前 Windows 用户权限。
