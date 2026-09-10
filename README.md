@@ -4,9 +4,10 @@
 
 账号关系：
 
-- Pi 机器人账号：`p_xiaoluban`，登录在运行桥接程序的电脑上。
-- 控制用户：安装向导中自行指定，例如 `w00789509`。
-- 消息方向：`w00789509` 私聊 `p_xiaoluban`，Pi 处理后由 `p_xiaoluban` 回复。
+- 接收账号：电脑端 WeLink 和 `welink-cli` 登录控制用户，例如 `w00789509`。
+- 对话账号：`p_xiaoluban`。
+- 接收方向：`welink-cli` 从 `w00789509` 的会话历史读取发给 `p_xiaoluban` 的消息。
+- 回复方向：桥接程序直接调用 `send_welink_message` MCP，由 `p_xiaoluban` 回复 `w00789509`。
 
 ## 快速开始
 
@@ -16,7 +17,8 @@
 - Python 3.10+。
 - Node.js 和 npm。
 - `welink-cli`。
-- WeLink PC 客户端已登录 `p_xiaoluban`。
+- WeLink PC 客户端已登录控制用户，例如 `w00789509`。
+- Pi 的 `mcp.json` 已配置 `welink-msg`，且其中的 `WELINK_TOKEN` 属于 `p_xiaoluban`。
 
 进入项目目录后执行：
 
@@ -32,14 +34,15 @@
 
 向导会自动：
 
-1. 刷新 WeLink Token，并检查电脑端当前登录的机器人账号。
+1. 刷新控制用户的 WeLink Token，并识别当前 UID。
 2. 配置允许与机器人交互的用户，例如 `w00789509`。
 3. 检查 Pi；未安装时询问是否自动安装。
 4. 调用 `pi --list-models` 读取已认证的模型。
 5. 读取 Pi 的默认模型。
-6. 配置允许的工作区和默认目录。
-7. 生成只保存在本机的 `config.json`。
-8. 询问是否立即启动桥接服务。
+6. 自动发现 Pi 的 `welink-msg` stdio MCP，并确认其提供 `send_welink_message`。
+7. 配置允许的工作区和默认目录。
+8. 生成只保存在本机的 `config.json`。
+9. 询问是否立即启动桥接服务。
 
 Pi 的安装命令为：
 
@@ -114,7 +117,7 @@ pi --model {model} --no-session --no-approve -p
 
 首次启动只记录已有消息，不执行历史指令。启动后再发送一条新的 `/` 指令。
 
-程序以 `p_xiaoluban` 的身份，每5秒只查询指定用户最新1条私聊消息，并使用消息 ID 去重。请等待上一条指令被接收后再发送下一条，避免在一个轮询周期内连续发送多条导致遗漏。
+程序以 `w00789509` 的登录身份，每5秒只查询它与 `p_xiaoluban` 会话中的最新1条消息，并只处理发送者为允许用户的消息。Pi 只生成最终答案；回复不经过 Pi 决策或 `welink-cli`，而由桥接程序直接调用 MCP，以 `p_xiaoluban` 身份发送。
 
 停止服务：
 
@@ -124,7 +127,7 @@ Ctrl+C
 
 ## WeLink Token 续期
 
-程序启动时刷新一次 Token，之后默认每20分钟刷新。消息查询或发送失败时，还会强制刷新并重试一次。只要 WeLink PC 保持登录 `p_xiaoluban`，一般不需要再次扫码。
+程序启动时刷新一次控制用户 Token，之后默认每20分钟刷新。消息查询失败时还会强制刷新并重试一次。只要 WeLink PC 保持登录控制用户，一般不需要再次扫码。`p_xiaoluban` 的发送 Token 继续保存在原 Pi MCP 配置中，不会复制到本项目配置。
 
 ## 本地文件
 
