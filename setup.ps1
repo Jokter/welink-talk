@@ -193,8 +193,10 @@ $PiCommand = @($Discovery.command) + @(
 )
 
 $PreviousWorkingDirectory = ""
+$PreviousAllowedRoots = @()
 if ($Config.PSObject.Properties.Name -contains "pi") {
     $PreviousWorkingDirectory = [string]$Config.pi.working_directory
+    $PreviousAllowedRoots = @($Config.pi.allowed_working_roots)
 }
 elseif ($Config.PSObject.Properties.Name -contains "zcode") {
     $PreviousWorkingDirectory = [string]$Config.zcode.working_directory
@@ -204,6 +206,7 @@ $PiConfig = [pscustomobject]@{
     command = $PiCommand
     prompt_via_stdin = $true
     working_directory = $PreviousWorkingDirectory
+    allowed_working_roots = $PreviousAllowedRoots
     timeout_seconds = 900
     history_turns = 6
     default_model = $DefaultModel
@@ -227,16 +230,43 @@ Write-Host "Detected $($Models.Count) available models."
 Write-Host "Default model: $DefaultModel"
 
 Write-Host ""
-Write-Host "[4/5] Configure the Pi working directory."
+Write-Host "[4/5] Configure Pi workspaces."
 $ExistingWorkingDirectory = [string]$Config.pi.working_directory
 if (-not $ExistingWorkingDirectory -or $ExistingWorkingDirectory -eq "C:\work") {
     $ExistingWorkingDirectory = (Get-Location).Path
 }
-$WorkingDirectory = Read-WithDefault "Working directory" $ExistingWorkingDirectory
+$ExistingRoots = @($Config.pi.allowed_working_roots | Where-Object { $_ })
+if ($ExistingRoots.Count -eq 0) {
+    $ExistingRoots = @($ExistingWorkingDirectory)
+}
+$RootsText = Read-WithDefault "Allowed workspace roots, separated by semicolons" ($ExistingRoots -join ";")
+$AllowedRoots = @($RootsText -split ";" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+if ($AllowedRoots.Count -eq 0) {
+    throw "At least one allowed workspace root is required."
+}
+foreach ($RootPath in $AllowedRoots) {
+    if (-not (Test-Path $RootPath -PathType Container)) {
+        throw "Workspace root does not exist: $RootPath"
+    }
+}
+$WorkingDirectory = Read-WithDefault "Default working directory" $ExistingWorkingDirectory
 if (-not (Test-Path $WorkingDirectory -PathType Container)) {
     throw "Working directory does not exist: $WorkingDirectory"
 }
+$ResolvedWorkingDirectory = [System.IO.Path]::GetFullPath($WorkingDirectory)
+$InsideAllowedRoot = $false
+foreach ($RootPath in $AllowedRoots) {
+    $ResolvedRoot = [System.IO.Path]::GetFullPath($RootPath).TrimEnd('\')
+    if ($ResolvedWorkingDirectory -eq $ResolvedRoot -or $ResolvedWorkingDirectory.StartsWith($ResolvedRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $InsideAllowedRoot = $true
+        break
+    }
+}
+if (-not $InsideAllowedRoot) {
+    throw "Default working directory must be inside an allowed workspace root."
+}
 $Config.pi.working_directory = $WorkingDirectory
+$Config.pi.allowed_working_roots = $AllowedRoots
 
 $ConfigJson = $Config | ConvertTo-Json -Depth 20
 $Utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
@@ -249,6 +279,7 @@ Write-Host "  Control group:   $GroupId"
 Write-Host ("  Pi command:       {0}" -f (@($Config.pi.command) -join " "))
 Write-Host "  Default model:   $DefaultModel"
 Write-Host "  Working directory: $WorkingDirectory"
+Write-Host ("  Allowed roots:     {0}" -f ($AllowedRoots -join "; "))
 Write-Host "  Config file:     $ConfigPath"
 Write-Host ""
 
