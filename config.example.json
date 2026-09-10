@@ -12,8 +12,7 @@
   "private_chats": [
     {
       "account": "p_xiaoluban",
-      "allowed_senders": ["w00789509"],
-      "trigger_prefix": "/"
+      "allowed_senders": ["w00789509"]
     }
   ],
   "reply": {
@@ -38,7 +37,7 @@
       "C:\\work"
     ],
     "timeout_seconds": 900,
-    "history_turns": 6,
+    "history_turns": 10,
     "default_model": "",
     "models": []
   }
