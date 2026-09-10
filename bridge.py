@@ -359,7 +359,7 @@ class Bridge:
 
         if action in {"当前", "current"}:
             return f"当前目录：{current}"
-        if action in {"默认", "default"}:
+        if action in {"默认", "default", "root"}:
             target = self.resolve_directory(str(self.config["pi"].get("working_directory") or self.allowed_roots()[0]))
         elif action in {"返回", "上级", "back", "up"}:
             target = self.resolve_directory(str(current.parent))
@@ -371,11 +371,11 @@ class Bridge:
             rows.extend(f"{index}. {item.name}" for index, item in enumerate(children[:50], start=1))
             if len(children) > 50:
                 rows.append(f"还有 {len(children) - 50} 个目录未显示")
-            rows.append("发送 /项目 进入 <序号或项目名>")
+            rows.append("发送 /dir cd <序号或项目名>")
             return "\n".join(rows)
         elif action in {"进入", "切换", "enter", "cd"}:
             if not value:
-                return "请指定项目路径、项目名或 /项目 列表 中的序号。"
+                return "请指定项目路径、项目名或 /dir list 中的序号。"
             children = self.child_directories(current)
             if value.isdigit() and 1 <= int(value) <= len(children):
                 candidate = children[int(value) - 1]
@@ -388,7 +388,7 @@ class Bridge:
             rows.extend(f"{index}. {root}" for index, root in enumerate(self.allowed_roots(), start=1))
             return "\n".join(rows)
         else:
-            return "项目命令：/项目 当前、/项目 列表、/项目 进入 2、/项目 返回、/项目 切换 <路径>、/项目 默认"
+            return "目录命令：/dir、/dir list、/dir cd 2、/dir back、/dir cd <路径>、/dir root"
 
         chat["working_directory"] = str(target)
         chat["history"] = []
@@ -485,14 +485,14 @@ class Bridge:
                 "/模型 列表：查看可用模型\n"
                 "/模型 当前：查看当前模型\n"
                 "/模型 切换 2：按序号切换模型\n"
-                "/项目 当前：查看当前项目\n"
-                "/项目 列表：查看可选项目\n"
-                "/项目 进入 2：切换项目\n"
+                "/dir：查看当前项目\n"
+                "/dir list：查看可选项目\n"
+                "/dir cd 2：切换项目\n"
                 "/新对话：清除上下文"
             )
         elif command in {"模型", "model"}:
             answer = self.model_reply(key, argument)
-        elif command in {"项目", "project"}:
+        elif command == "dir":
             answer = self.directory_reply(key, argument)
         elif command in {"新对话", "new"}:
             self.chat_state(key)["history"] = []
