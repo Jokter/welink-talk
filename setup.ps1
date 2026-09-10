@@ -108,7 +108,6 @@ $Config.private_chats = @(
     [pscustomobject]@{
         account = $BotAccount
         allowed_senders = @($AllowedUserAccount)
-        trigger_prefix = "/"
     }
 )
 if ($Config.PSObject.Properties.Name -contains "group_chats") {
@@ -187,7 +186,7 @@ $PiConfig = [pscustomobject]@{
     working_directory = $PreviousWorkingDirectory
     allowed_working_roots = $PreviousAllowedRoots
     timeout_seconds = 900
-    history_turns = 6
+    history_turns = 10
     default_model = $DefaultModel
     models = $Models
 }
