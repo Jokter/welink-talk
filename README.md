@@ -68,14 +68,14 @@ pi --model {model} --no-session --no-approve -p
 
 ```text
 /帮我分析当前项目的目录结构
-/帮助
-/帮助 模型
-/帮助 dir
-/模型 列表
-/模型 当前
-/模型 切换 2
-/模型 切换 openai/gpt-5
-/模型 help
+/help
+/help model
+/help dir
+/model list
+/model current
+/model switch 2
+/model switch openai/gpt-5
+/model help
 /dir help
 /dir current
 /dir roots
@@ -84,8 +84,8 @@ pi --model {model} --no-session --no-approve -p
 /dir back
 /dir cd D:\workspaces\project-a
 /dir root
-/新对话
-/帮助
+/new
+/new help
 ```
 
 每个 WeLink 私聊或群聊分别保存模型和最近六轮上下文。切换模型时自动清除旧上下文。
