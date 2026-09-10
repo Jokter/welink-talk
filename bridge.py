@@ -276,7 +276,7 @@ class Bridge:
             command += ["--user-account", chat["account"]]
         else:
             command += ["--group-id", chat["group_id"]]
-        command += ["--query-count", str(self.config.get("query_count", 20))]
+        command += ["--query-count", "1"]
         result = self.run_welink(command, timeout=30)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "查询 WeLink 消息失败")
