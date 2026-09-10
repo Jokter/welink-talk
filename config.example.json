@@ -12,11 +12,18 @@
   "bot_account": "p_xiaoluban",
   "private_chats": [
     {
-      "account": "w00789509",
+      "account": "p_xiaoluban",
       "allowed_senders": ["w00789509"],
       "trigger_prefix": "/"
     }
   ],
+  "reply": {
+    "mode": "mcp",
+    "config_path": "C:\\Users\\your-name\\.pi\\agent\\mcp.json",
+    "server": "welink-msg",
+    "tool": "send_welink_message",
+    "timeout_seconds": 120
+  },
   "pi": {
     "command": [
       "pi",
