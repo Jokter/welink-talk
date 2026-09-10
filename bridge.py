@@ -106,8 +106,9 @@ def parse_messages(raw: str, conversation_key: str) -> List[Dict[str, str]]:
         "senderAccount", "fromAccount", "userAccount", "w3account",
         "sender", "from", "senderId", "fromUserId", "sourceAccount",
     ]
+    receiver_keys = ["receiverAccount", "toAccount", "receiver", "to", "receiverId", "toUserId"]
     text_keys = ["text", "content", "messageContent", "msgContent", "body"]
-    time_keys = ["sendTime", "createTime", "timestamp", "time", "serverTime"]
+    time_keys = ["serverSendTime", "sendTime", "createTime", "timestamp", "time", "serverTime"]
 
     for obj in walk_objects(payload):
         text = normalize_text(first_value(obj, text_keys))
@@ -117,6 +118,10 @@ def parse_messages(raw: str, conversation_key: str) -> List[Dict[str, str]]:
         if isinstance(sender_value, dict):
             sender_value = first_value(sender_value, ["w3account", "account", "id", "userId"])
         sender = str(sender_value or "").strip()
+        receiver_value = first_value(obj, receiver_keys)
+        if isinstance(receiver_value, dict):
+            receiver_value = first_value(receiver_value, ["w3account", "account", "id", "userId"])
+        receiver = str(receiver_value or "").strip()
         timestamp = str(first_value(obj, time_keys) or "")
         message_id = str(first_value(obj, id_keys) or "").strip()
         if not sender and not message_id:
@@ -127,6 +132,7 @@ def parse_messages(raw: str, conversation_key: str) -> List[Dict[str, str]]:
         messages.append({
             "id": message_id,
             "sender": sender,
+            "receiver": receiver,
             "text": text,
             "timestamp": timestamp,
         })
@@ -203,7 +209,7 @@ class Bridge:
         if not isinstance(self.config.get("pi"), dict):
             raise RuntimeError("配置尚未切换到 Pi，请重新执行 setup.ps1")
         self.state_path = ROOT / self.config.get("state_file", "state.json")
-        self.state = load_json(self.state_path, {"seen": [], "chats": {}, "bootstrapped": False})
+        self.state = load_json(self.state_path, {"seen": [], "chats": {}})
         self.seen_order = list(self.state.get("seen", []))
         self.seen = set(self.seen_order)
         self.dry_run = dry_run
@@ -578,17 +584,17 @@ class Bridge:
         self.send_via_mcp(key, sender, answer)
 
     def poll_once(self) -> None:
-        bootstrap = not self.state.get("bootstrapped", False)
         for key, kind, chat in self.conversations():
             allowed = {str(item).lower() for item in chat.get("allowed_senders", [])}
+            expected_receiver = str(chat.get("account", "")).lower()
             messages = self.query(kind, chat)
             for message in messages:
                 if message["id"] in self.seen:
                     continue
                 self.mark_seen(message["id"])
-                if bootstrap and self.config.get("ignore_existing_on_first_start", True):
-                    continue
                 if allowed and message["sender"].lower() not in allowed:
+                    continue
+                if expected_receiver and message.get("receiver", "").lower() != expected_receiver:
                     continue
                 try:
                     self.handle(key, kind, chat, message["sender"], message["text"])
@@ -600,7 +606,6 @@ class Bridge:
                         self.send_via_mcp(key, message["sender"], f"处理失败：{exc}")
                     except Exception as reply_exc:
                         self.log_error(key, reply_exc)
-        self.state["bootstrapped"] = True
         self.save_state()
 
     @staticmethod
