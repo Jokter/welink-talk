@@ -24,6 +24,18 @@
 
 首次启动只记录最近消息，不执行旧消息。启动后再从手机发送新消息。
 
+## WeLink 登录续期
+
+程序启动时会通过已登录的 WeLink PC 客户端刷新 Token，之后默认每20分钟自动刷新一次。消息查询或发送失败时，还会强制刷新并重试一次。一般不需要重复扫码。
+
+```json
+"welink_env": "pro",
+"auto_refresh_auth": true,
+"auth_refresh_interval_seconds": 1200
+```
+
+如果 WeLink PC 已退出登录，程序会在 `bridge.log` 中记录认证错误。重新登录 WeLink PC 后，桥接程序会继续尝试恢复。
+
 ## 手机命令
 
 私聊或群聊中，以 `/` 开头的内容会发送给 ZCode：
