@@ -285,7 +285,7 @@ class Bridge:
             "--user-account",
             chat["account"],
             "--query-count",
-            "1",
+            str(self.config.get("query_count", 5)),
         ]
         result = self.run_welink(command, timeout=30)
         if result.returncode != 0:
