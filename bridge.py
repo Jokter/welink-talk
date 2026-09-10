@@ -335,134 +335,9 @@ class Bridge:
                 continue
         raise ValueError("目录不在允许的工作区内")
 
-    @staticmethod
-    def child_directories(current: Path) -> List[Path]:
-        try:
-            return sorted(
-                (item for item in current.iterdir() if item.is_dir() and not item.name.startswith(".")),
-                key=lambda item: item.name.lower(),
-            )
-        except OSError as exc:
-            raise ValueError(f"无法读取目录：{exc}") from exc
-
-    def directory_reply(self, key: str, argument: str) -> str:
-        chat = self.chat_state(key)
-        current = self.resolve_directory(chat["working_directory"])
-        action, _, value = argument.strip().partition(" ")
-        action = action or "help"
-
-        if action == "help":
-            return self.help_reply("dir")
-
-        if action == "current":
-            return f"当前目录：{current}"
-        if action in {"default", "root"}:
-            target = self.resolve_directory(str(self.config["pi"].get("working_directory") or self.allowed_roots()[0]))
-        elif action in {"back", "up"}:
-            target = self.resolve_directory(str(current.parent))
-        elif action in {"list", "ls"}:
-            children = self.child_directories(current)
-            if not children:
-                return f"当前目录没有子目录：{current}"
-            rows = [f"当前目录：{current}"]
-            rows.extend(f"{index}. {item.name}" for index, item in enumerate(children[:50], start=1))
-            if len(children) > 50:
-                rows.append(f"还有 {len(children) - 50} 个目录未显示")
-            rows.append("发送 /dir cd <序号或项目名>")
-            return "\n".join(rows)
-        elif action in {"enter", "cd"}:
-            if not value:
-                return "请指定项目路径、项目名或 /dir list 中的序号。"
-            children = self.child_directories(current)
-            if value.isdigit() and 1 <= int(value) <= len(children):
-                candidate = children[int(value) - 1]
-            else:
-                requested = Path(value).expanduser()
-                candidate = requested if requested.is_absolute() else current / requested
-            target = self.resolve_directory(str(candidate))
-        elif action == "roots":
-            rows = ["允许的工作区："]
-            rows.extend(f"{index}. {root}" for index, root in enumerate(self.allowed_roots(), start=1))
-            return "\n".join(rows)
-        else:
-            return f"不支持的 dir 子命令：{action}\n\n{self.help_reply('dir')}"
-
-        chat["working_directory"] = str(target)
-        chat["history"] = []
-        self.save_state()
-        return f"已切换目录：{target}\n已开启新对话。"
-
-    def model_reply(self, key: str, argument: str) -> str:
-        pi = self.config["pi"]
-        models = pi["models"]
-        chat = self.chat_state(key)
-        selected = argument.strip()
-        if not selected or selected == "help":
-            return self.help_reply("model")
-        if selected == "list":
-            rows = ["可用模型："]
-            for index, model in enumerate(models, start=1):
-                mark = "（当前）" if model == chat["model"] else ""
-                rows.append(f"{index}. {model}{mark}")
-            rows.append("发送 /model switch <序号或模型名> 进行切换")
-            return "\n".join(rows)
-
-        if selected == "current":
-            return f"当前模型：{chat['model']}"
-        if selected.startswith("switch "):
-            selected = selected[7:].strip()
-        else:
-            return f"不支持的 model 子命令：{selected}\n\n{self.help_reply('model')}"
-        if selected.isdigit() and 1 <= int(selected) <= len(models):
-            selected = models[int(selected) - 1]
-        exact = next((model for model in models if model.lower() == selected.lower()), None)
-        if not exact:
-            return f"模型不存在：{selected}\n\n{self.help_reply('model')}"
-        chat["model"] = exact
-        chat["history"] = []
-        self.save_state()
-        return f"已切换到 {exact}，并开启新会话。"
-
-    @staticmethod
-    def help_reply(topic: str = "") -> str:
-        normalized = topic.strip().lower()
-        if normalized == "model":
-            return (
-                "Model 命令：\n"
-                "/model list    查看可用模型\n"
-                "/model current    查看当前模型\n"
-                "/model switch 2    按序号切换\n"
-                "/model switch <模型名>    按名称切换\n"
-                "/model help    显示本帮助"
-            )
-        if normalized == "dir":
-            return (
-                "目录命令：\n"
-                "/dir current    查看当前项目目录\n"
-                "/dir roots    查看允许的工作区\n"
-                "/dir list    查看当前目录的子项目\n"
-                "/dir cd 2    按序号进入项目\n"
-                "/dir cd <路径或名称>    切换项目\n"
-                "/dir back    返回上一级\n"
-                "/dir root    返回默认目录\n"
-                "/dir help    显示本帮助"
-            )
-        if normalized == "new":
-            return "New 命令：\n/new    清除当前项目的最近对话上下文\n/new help    显示本帮助"
-        return (
-            "可用命令：\n"
-            "/help model    查看模型命令\n"
-            "/help dir    查看项目目录命令\n"
-            "/help new    查看新对话命令\n"
-            "/model help    查看模型子命令\n"
-            "/dir help    查看目录子命令\n"
-            "/new    清除当前对话\n"
-            "/问题内容    直接询问 Pi"
-        )
-
     def make_prompt(self, chat: Dict[str, Any], user_text: str) -> str:
         history = chat.get("history", [])
-        limit = int(self.config["pi"].get("history_turns", 6)) * 2
+        limit = int(self.config["pi"].get("history_turns", 10)) * 2
         lines = [
             "你正在通过手机聊天窗口回答用户。只输出最终答案，不展示思考过程、分析过程、工具调用过程或内部日志。",
             "回答应适合手机阅读。",
@@ -506,7 +381,7 @@ class Bridge:
             {"role": "user", "content": user_text},
             {"role": "assistant", "content": answer},
         ])
-        chat["history"] = history[-int(pi.get("history_turns", 6)) * 2:]
+        chat["history"] = history[-int(pi.get("history_turns", 10)) * 2:]
         self.save_state()
         return answer
 
@@ -557,30 +432,10 @@ class Bridge:
 
     def handle(self, key: str, kind: str, chat: Dict[str, Any], sender: str, text: str) -> None:
         text = text.strip()
-        prefix = str(chat.get("trigger_prefix", "/"))
-        if not prefix or not text.startswith(prefix):
-            return
-        text = text[len(prefix):].strip()
         if not text:
             return
-        print(f"Received command from {key}.", flush=True)
-        command, _, argument = text.partition(" ")
-        command = command.lower()
-        if command == "help":
-            answer = self.help_reply(argument)
-        elif command == "model":
-            answer = self.model_reply(key, argument)
-        elif command == "dir":
-            answer = self.directory_reply(key, argument)
-        elif command == "new":
-            if argument.strip() == "help":
-                answer = self.help_reply("new")
-            else:
-                self.chat_state(key)["history"] = []
-                self.save_state()
-                answer = "已开启新会话。"
-        else:
-            answer = self.ask_pi(key, text)
+        print(f"Received message from {key}.", flush=True)
+        answer = self.ask_pi(key, text)
         self.send_via_mcp(key, sender, answer)
 
     def poll_once(self) -> None:
