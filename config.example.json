@@ -9,10 +9,11 @@
   "reply_max_chars": 3500,
   "ignore_existing_on_first_start": true,
   "state_file": "state.json",
+  "bot_account": "p_xiaoluban",
   "private_chats": [
     {
-      "account": "p_xiaoluban",
-      "allowed_senders": ["p_xiaoluban"],
+      "account": "w00789509",
+      "allowed_senders": ["w00789509"],
       "trigger_prefix": "/"
     }
   ],
