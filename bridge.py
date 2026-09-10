@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from mcp_client import StdioMcpClient, load_server
+
 
 ROOT = Path(__file__).resolve().parent
 
@@ -209,6 +211,7 @@ class Bridge:
         self.auth_ready = not self.config.get("auto_refresh_auth", True)
         self.next_auth_refresh_at = 0.0
         self.last_auth_error = ""
+        self.reply_client: Optional[StdioMcpClient] = None
 
     def refresh_auth(self, force: bool = False) -> None:
         if not self.config.get("auto_refresh_auth", True):
@@ -283,19 +286,6 @@ class Bridge:
             raise RuntimeError(result.stderr.strip() or "查询 WeLink 消息失败")
         key = f"user:{chat['account']}"
         return parse_messages(result.stdout, key)
-
-    def send(self, kind: str, chat: Dict[str, Any], text: str) -> None:
-        max_chars = int(self.config.get("reply_max_chars", 3500))
-        parts = [text[index:index + max_chars] for index in range(0, len(text), max_chars)] or [""]
-        for index, part in enumerate(parts, start=1):
-            prefix = f"[{index}/{len(parts)}]\n" if len(parts) > 1 else ""
-            if self.dry_run:
-                print(f"DRY-RUN reply to {kind}: {prefix}{part}")
-                continue
-            command = [self.welink_cli, "im", "send-to-user", "--receiver", chat["account"]]
-            result = self.run_welink(command + ["--text", prefix + part], timeout=30)
-            if result.returncode != 0:
-                raise RuntimeError(result.stderr.strip() or "发送 WeLink 消息失败")
 
     def chat_state(self, key: str) -> Dict[str, Any]:
         chats = self.state.setdefault("chats", {})
@@ -479,11 +469,10 @@ class Bridge:
         lines.append(f"\n用户的新消息：{user_text}")
         return "\n".join(lines)
 
-    def ask_pi(self, key: str, user_text: str) -> str:
+    def run_pi_prompt(self, key: str, prompt: str) -> str:
         pi = self.config["pi"]
         chat = self.chat_state(key)
         model = chat["model"]
-        prompt = self.make_prompt(chat, user_text)
         replacements = {"model": model, "prompt": prompt}
         command = [str(part).format(**replacements) for part in pi["command"]]
         stdin_text = prompt if pi.get("prompt_via_stdin", True) else None
@@ -499,6 +488,13 @@ class Bridge:
         answer = extract_final_answer(result.stdout)
         if not answer:
             raise RuntimeError("Pi 没有返回可识别的最终答案")
+        return answer
+
+    def ask_pi(self, key: str, user_text: str) -> str:
+        pi = self.config["pi"]
+        chat = self.chat_state(key)
+        prompt = self.make_prompt(chat, user_text)
+        answer = self.run_pi_prompt(key, prompt)
         history = chat.setdefault("history", [])
         history.extend([
             {"role": "user", "content": user_text},
@@ -508,7 +504,52 @@ class Bridge:
         self.save_state()
         return answer
 
-    def handle(self, key: str, kind: str, chat: Dict[str, Any], text: str) -> None:
+    def send_via_mcp(self, key: str, receiver: str, text: str) -> None:
+        reply = self.config.get("reply", {})
+        if reply.get("mode") != "mcp":
+            raise RuntimeError("回复方式未配置为 MCP，请重新执行 setup.ps1")
+        max_chars = int(self.config.get("reply_max_chars", 3500))
+        parts = [text[index:index + max_chars] for index in range(0, len(text), max_chars)] or [""]
+        for index, part in enumerate(parts, start=1):
+            prefix = f"[{index}/{len(parts)}]\n" if len(parts) > 1 else ""
+            content = prefix + part
+            if self.dry_run:
+                print(f"DRY-RUN MCP reply to {receiver}: {content}")
+                continue
+            client = self.get_reply_client()
+            try:
+                client.call_tool(
+                    str(reply.get("tool", "send_welink_message")),
+                    {"content": content, "receiver": receiver},
+                )
+            except Exception:
+                self.close_reply_client()
+                raise
+
+    def get_reply_client(self) -> StdioMcpClient:
+        if self.reply_client is not None and self.reply_client.process.poll() is None:
+            return self.reply_client
+        reply = self.config["reply"]
+        config_path = Path(str(reply["config_path"])).expanduser()
+        server = load_server(config_path, str(reply["server"]))
+        client = StdioMcpClient(server, timeout=float(reply.get("timeout_seconds", 120)))
+        try:
+            client.initialize()
+            tool = str(reply.get("tool", "send_welink_message"))
+            if tool not in client.list_tools():
+                raise RuntimeError(f"MCP 服务器不提供工具：{tool}")
+        except Exception:
+            client.close()
+            raise
+        self.reply_client = client
+        return client
+
+    def close_reply_client(self) -> None:
+        if self.reply_client is not None:
+            self.reply_client.close()
+            self.reply_client = None
+
+    def handle(self, key: str, kind: str, chat: Dict[str, Any], sender: str, text: str) -> None:
         text = text.strip()
         prefix = str(chat.get("trigger_prefix", "/"))
         if not prefix or not text.startswith(prefix):
@@ -534,7 +575,7 @@ class Bridge:
                 answer = "已开启新会话。"
         else:
             answer = self.ask_pi(key, text)
-        self.send(kind, chat, answer)
+        self.send_via_mcp(key, sender, answer)
 
     def poll_once(self) -> None:
         bootstrap = not self.state.get("bootstrapped", False)
@@ -550,12 +591,15 @@ class Bridge:
                 if allowed and message["sender"].lower() not in allowed:
                     continue
                 try:
-                    self.handle(key, kind, chat, message["text"])
+                    self.handle(key, kind, chat, message["sender"], message["text"])
                 except subprocess.TimeoutExpired:
-                    self.send(kind, chat, "本次处理超时，请缩小问题后重试。")
+                    self.send_via_mcp(key, message["sender"], "本次处理超时，请缩小问题后重试。")
                 except Exception as exc:
                     self.log_error(key, exc)
-                    self.send(kind, chat, f"处理失败：{exc}")
+                    try:
+                        self.send_via_mcp(key, message["sender"], f"处理失败：{exc}")
+                    except Exception as reply_exc:
+                        self.log_error(key, reply_exc)
         self.state["bootstrapped"] = True
         self.save_state()
 
@@ -572,16 +616,19 @@ class Bridge:
             f"{self.config.get('poll_interval_seconds', 5)} seconds.",
             flush=True,
         )
-        while True:
-            try:
-                self.poll_once()
-            except KeyboardInterrupt:
-                return
-            except Exception as exc:
-                self.log_error("poll", exc)
-            if once:
-                return
-            time.sleep(float(self.config.get("poll_interval_seconds", 5)))
+        try:
+            while True:
+                try:
+                    self.poll_once()
+                except KeyboardInterrupt:
+                    return
+                except Exception as exc:
+                    self.log_error("poll", exc)
+                if once:
+                    return
+                time.sleep(float(self.config.get("poll_interval_seconds", 5)))
+        finally:
+            self.close_reply_client()
 
 
 def main() -> int:
