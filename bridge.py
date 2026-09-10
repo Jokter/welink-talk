@@ -355,7 +355,10 @@ class Bridge:
         chat = self.chat_state(key)
         current = self.resolve_directory(chat["working_directory"])
         action, _, value = argument.strip().partition(" ")
-        action = action or "当前"
+        action = action or "help"
+
+        if action in {"帮助", "help"}:
+            return self.help_reply("dir")
 
         if action in {"当前", "current"}:
             return f"当前目录：{current}"
@@ -388,7 +391,7 @@ class Bridge:
             rows.extend(f"{index}. {root}" for index, root in enumerate(self.allowed_roots(), start=1))
             return "\n".join(rows)
         else:
-            return "目录命令：/dir、/dir list、/dir cd 2、/dir back、/dir cd <路径>、/dir root"
+            return f"不支持的 dir 子命令：{action}\n\n{self.help_reply('dir')}"
 
         chat["working_directory"] = str(target)
         chat["history"] = []
@@ -399,7 +402,10 @@ class Bridge:
         pi = self.config["pi"]
         models = pi["models"]
         chat = self.chat_state(key)
-        if not argument:
+        selected = argument.strip()
+        if not selected or selected in {"帮助", "help"}:
+            return self.help_reply("模型")
+        if selected == "列表":
             rows = ["可用模型："]
             for index, model in enumerate(models, start=1):
                 mark = "（当前）" if model == chat["model"] else ""
@@ -407,22 +413,58 @@ class Bridge:
             rows.append("发送 /模型 切换 <序号或模型名> 进行切换")
             return "\n".join(rows)
 
-        selected = argument.strip()
-        if selected == "列表":
-            return self.model_reply(key, "")
         if selected == "当前":
             return f"当前模型：{chat['model']}"
         if selected.startswith("切换 "):
             selected = selected[3:].strip()
+        else:
+            return f"不支持的模型子命令：{selected}\n\n{self.help_reply('模型')}"
         if selected.isdigit() and 1 <= int(selected) <= len(models):
             selected = models[int(selected) - 1]
         exact = next((model for model in models if model.lower() == selected.lower()), None)
         if not exact:
-            return "模型不存在。发送 /模型 列表 查看可用模型。"
+            return f"模型不存在：{selected}\n\n{self.help_reply('模型')}"
         chat["model"] = exact
         chat["history"] = []
         self.save_state()
         return f"已切换到 {exact}，并开启新会话。"
+
+    @staticmethod
+    def help_reply(topic: str = "") -> str:
+        normalized = topic.strip().lower()
+        if normalized in {"模型", "model"}:
+            return (
+                "模型命令：\n"
+                "/模型 列表    查看可用模型\n"
+                "/模型 当前    查看当前模型\n"
+                "/模型 切换 2    按序号切换\n"
+                "/模型 切换 <模型名>    按名称切换\n"
+                "/模型 help    显示本帮助"
+            )
+        if normalized == "dir":
+            return (
+                "目录命令：\n"
+                "/dir current    查看当前项目目录\n"
+                "/dir roots    查看允许的工作区\n"
+                "/dir list    查看当前目录的子项目\n"
+                "/dir cd 2    按序号进入项目\n"
+                "/dir cd <路径或名称>    切换项目\n"
+                "/dir back    返回上一级\n"
+                "/dir root    返回默认目录\n"
+                "/dir help    显示本帮助"
+            )
+        if normalized in {"新对话", "new"}:
+            return "新对话命令：\n/新对话    清除当前项目的最近对话上下文\n/新对话 help    显示本帮助"
+        return (
+            "可用命令：\n"
+            "/帮助 模型    查看模型命令\n"
+            "/帮助 dir    查看项目目录命令\n"
+            "/帮助 新对话    查看新对话命令\n"
+            "/模型 help    查看模型子命令\n"
+            "/dir help    查看目录子命令\n"
+            "/新对话    清除当前对话\n"
+            "/问题内容    直接询问 Pi"
+        )
 
     def make_prompt(self, chat: Dict[str, Any], user_text: str) -> str:
         history = chat.get("history", [])
@@ -480,24 +522,18 @@ class Bridge:
         command, _, argument = text.partition(" ")
         command = command.lower()
         if command in {"帮助", "help"}:
-            answer = (
-                "/问题内容：与 Pi 对话\n"
-                "/模型 列表：查看可用模型\n"
-                "/模型 当前：查看当前模型\n"
-                "/模型 切换 2：按序号切换模型\n"
-                "/dir：查看当前项目\n"
-                "/dir list：查看可选项目\n"
-                "/dir cd 2：切换项目\n"
-                "/新对话：清除上下文"
-            )
+            answer = self.help_reply(argument)
         elif command in {"模型", "model"}:
             answer = self.model_reply(key, argument)
         elif command == "dir":
             answer = self.directory_reply(key, argument)
         elif command in {"新对话", "new"}:
-            self.chat_state(key)["history"] = []
-            self.save_state()
-            answer = "已开启新会话。"
+            if argument.strip() in {"帮助", "help"}:
+                answer = self.help_reply("新对话")
+            else:
+                self.chat_state(key)["history"] = []
+                self.save_state()
+                answer = "已开启新会话。"
         else:
             answer = self.ask_pi(key, text)
         self.send(kind, chat, answer)
